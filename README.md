@@ -311,7 +311,38 @@ Returns full customer object with emails, phones, websites, social profiles, and
 GET /api/v1/users
 ```
 
-Returns all non-deleted users.
+Returns all non-deleted users with full profile data:
+
+```json
+{
+  "status": "success",
+  "data": [
+    {
+      "id": 1,
+      "firstName": "Jane",
+      "lastName": "Smith",
+      "email": "jane@example.com",
+      "role": "admin",
+      "status": "active",
+      "inviteState": "activated",
+      "type": "user",
+      "jobTitle": "Support Lead",
+      "phone": "+1-555-0100",
+      "timezone": "America/New_York",
+      "locale": "en",
+      "photoUrl": "https://...",
+      "permissions": [],
+      "mailboxIds": [1, 2, 4],
+      "lastLoginAt": "2026-03-07T14:30:00+00:00",
+      "telegramEnabled": false,
+      "createdAt": "2025-01-15T10:00:00+00:00",
+      "updatedAt": "2026-03-07T14:30:00+00:00"
+    }
+  ]
+}
+```
+
+**Fields:** `lastLoginAt` requires the login tracking migration included in this module. `telegramEnabled` is populated if the Telegram notifications module is installed. `mailboxIds` lists mailboxes the user has access to.
 
 #### Get User
 
@@ -545,7 +576,9 @@ Modules/ApiWebhooks/
 ├── README.md                            # This file
 ├── Database/
 │   └── Migrations/
-│       └── 2026_03_06_000001_create_api_keys_table.php
+│       ├── 2026_03_06_000001_create_api_keys_table.php
+│       ├── 2026_03_06_200000_add_detail_columns_to_api_logs.php
+│       └── 2026_03_07_000001_add_last_login_at_to_users_table.php
 ├── Http/
 │   ├── Controllers/
 │   │   ├── ApiController.php            # All API endpoints
