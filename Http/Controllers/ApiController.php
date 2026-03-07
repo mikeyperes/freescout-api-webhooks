@@ -484,9 +484,16 @@ class ApiController extends Controller
 
     // ── Email History ────────────────────────────────────────────
 
+    /**
+     * List email threads (inbound/outbound) with optional filters.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\JsonResponse
+     */
     public function emailHistory(Request $request)
     {
-        $query = Thread::whereIn('type', [Thread::TYPE_CUSTOMER, Thread::TYPE_MESSAGE])
+        $query = Thread::with('conversation')
+            ->whereIn('type', [Thread::TYPE_CUSTOMER, Thread::TYPE_MESSAGE])
             ->where('state', Thread::STATE_PUBLISHED);
 
         if ($request->filled('mailbox_id')) {
