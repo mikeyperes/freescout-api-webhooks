@@ -2,6 +2,8 @@
 
 namespace Modules\ApiWebhooks\Providers;
 
+use Illuminate\Auth\Events\Login;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 
 class ApiWebhooksServiceProvider extends ServiceProvider
@@ -19,6 +21,18 @@ class ApiWebhooksServiceProvider extends ServiceProvider
                 return;
             }
             echo '<li><a href="' . route('apiwebhooks.settings') . '"><i class="glyphicon glyphicon-cloud"></i> ' . __('API & Webhooks') . '</a></li>';
+        });
+
+        // Track last login time on the users table.
+        Event::listen(Login::class, function (Login $event) {
+            if ($event->user && method_exists($event->user, 'save')) {
+                try {
+                    $event->user->last_login_at = now();
+                    $event->user->save();
+                } catch (\Exception $e) {
+                    // Column may not exist yet — silently ignore.
+                }
+            }
         });
     }
 
