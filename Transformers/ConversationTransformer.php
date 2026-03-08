@@ -19,8 +19,17 @@ class ConversationTransformer
         Conversation::STATE_DELETED   => 'deleted',
     ];
 
+    /**
+     * Transform a Conversation model into an API-friendly array.
+     *
+     * @param  \App\Conversation  $c
+     * @param  bool               $includeThreads  Embed published threads when true.
+     * @return array
+     */
     public static function transform(Conversation $c, $includeThreads = false)
     {
+        $mailbox = $c->mailbox;
+
         $data = [
             'id'        => $c->id,
             'number'    => $c->number,
@@ -30,9 +39,15 @@ class ConversationTransformer
             'subject'   => $c->subject,
             'preview'   => $c->preview,
             'mailboxId' => $c->mailbox_id,
+            'mailbox'   => $mailbox ? [
+                'id'    => $mailbox->id,
+                'name'  => $mailbox->name,
+                'email' => $mailbox->email,
+            ] : null,
             'assignee'  => $c->user_id ? UserTransformer::brief($c->user) : null,
             'customer'  => $c->customer_id ? CustomerTransformer::brief($c->customer) : null,
             'createdBy' => self::createdBy($c),
+            'followers' => self::buildFollowers($c),
             'cc'        => $c->getCcArray(),
             'bcc'       => $c->getBccArray(),
             'closedAt'  => $c->closed_at ? date('c', strtotime($c->closed_at)) : null,
@@ -61,6 +76,43 @@ class ConversationTransformer
     {
         $map = [1 => 'email', 2 => 'phone', 3 => 'chat'];
         return $map[$type] ?? 'email';
+    }
+
+    /**
+     * Build the followers array for a conversation.
+     *
+     * Each follower entry contains the user_id and, when the User model
+     * can be resolved, includes first/last name and email.
+     *
+     * @param  \App\Conversation  $c
+     * @return array
+     */
+    private static function buildFollowers(Conversation $c)
+    {
+        try {
+            $followers = $c->followers;
+        } catch (\Exception $e) {
+            return [];
+        }
+
+        if (!$followers || $followers->isEmpty()) {
+            return [];
+        }
+
+        return $followers->map(function ($follower) {
+            $user = \App\User::find($follower->user_id);
+
+            if ($user) {
+                return [
+                    'id'        => $user->id,
+                    'firstName' => $user->first_name,
+                    'lastName'  => $user->last_name,
+                    'email'     => $user->email,
+                ];
+            }
+
+            return ['id' => $follower->user_id];
+        })->values()->toArray();
     }
 
     private static function createdBy(Conversation $c)

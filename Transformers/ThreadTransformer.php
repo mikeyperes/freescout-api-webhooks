@@ -41,6 +41,7 @@ class ThreadTransformer
             'createdBy'      => self::createdBy($t),
             'assignedTo'     => $t->user_id ? UserTransformer::brief($t->user) : null,
             'hasAttachments' => (bool) $t->has_attachments,
+            'attachments'    => self::buildAttachments($t),
             'createdAt'      => $t->created_at ? date('c', strtotime($t->created_at)) : null,
             'openedAt'       => $t->opened_at ? date('c', strtotime($t->opened_at)) : null,
         ];
@@ -63,6 +64,42 @@ class ThreadTransformer
         $text = preg_replace('/\s+/', ' ', $text);
 
         return mb_strlen($text) > 200 ? mb_substr($text, 0, 200) . '...' : $text;
+    }
+
+    /**
+     * Build the attachments array for a thread.
+     *
+     * Returns non-embedded attachments with id, filename, mime type, size, and
+     * download URL. Falls back to an empty array when there are no attachments.
+     *
+     * @param  \App\Thread  $t
+     * @return array
+     */
+    private static function buildAttachments(Thread $t)
+    {
+        if (!$t->has_attachments) {
+            return [];
+        }
+
+        try {
+            $attachments = $t->attachments;
+        } catch (\Exception $e) {
+            return [];
+        }
+
+        if (!$attachments || $attachments->isEmpty()) {
+            return [];
+        }
+
+        return $attachments->map(function (\App\Attachment $a) {
+            return [
+                'id'       => $a->id,
+                'filename' => $a->file_name,
+                'url'      => $a->url(),
+                'mimeType' => $a->mime_type,
+                'size'     => $a->size,
+            ];
+        })->values()->toArray();
     }
 
     private static function createdBy(Thread $t)
