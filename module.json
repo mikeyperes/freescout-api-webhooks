@@ -1,0 +1,13 @@
+{
+    "name": "ApiWebhooks",
+    "alias": "fsapiwebhooks",
+    "description": "Secure REST API for FreeScout with IP whitelisting, request logging, and API key authentication.",
+    "version": "1.0.0",
+    "active": 1,
+    "detached": true,
+    "author": "Michael Peres",
+    "authorUrl": "https://github.com/mikeyperes",
+    "providers": [
+        "Modules\\ApiWebhooks\\Providers\\ApiWebhooksServiceProvider"
+    ]
+}
