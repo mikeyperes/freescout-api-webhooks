@@ -20,7 +20,80 @@
                 </div>
             @endif
 
-            {{-- Create Key --}}
+            {{-- Security Notice --}}
+            <div class="alert alert-info" style="font-size:13px;">
+                <strong>Security:</strong> API keys are authenticated via <code>X-Api-Key</code> header only.
+                Every key <strong>requires</strong> at least one whitelisted IP &mdash; keys with no IP whitelist will deny all requests.
+                Rate limit: 60 requests/minute per key.
+            </div>
+
+            {{-- ══════════════════════════════════════════════════
+                 BLOCKED IPs
+                 ══════════════════════════════════════════════════ --}}
+            @if(isset($blockedIps) && count($blockedIps) > 0)
+            <div class="panel panel-danger">
+                <div class="panel-heading"><strong>Blocked IPs</strong> <small class="text-muted">(403 Forbidden responses)</small></div>
+                <table class="table table-condensed" style="font-size:12px;">
+                    <thead>
+                        <tr>
+                            <th>IP Address</th>
+                            <th>Location</th>
+                            <th>Client</th>
+                            <th>Attempts</th>
+                            <th>First Seen</th>
+                            <th>Last Attempt</th>
+                            <th>Whitelist</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach($blockedIps as $blocked)
+                            <tr>
+                                <td><code>{{ $blocked['ip'] }}</code></td>
+                                <td>
+                                    @if($blocked['city'] && $blocked['city'] !== 'Local')
+                                        {{ $blocked['city'] }}, {{ $blocked['country'] }}
+                                    @elseif($blocked['country'])
+                                        {{ $blocked['country'] }}
+                                    @else
+                                        <span class="text-muted">Unknown</span>
+                                    @endif
+                                </td>
+                                <td><small>{{ $blocked['user_agent'] }}</small></td>
+                                <td><span class="label label-danger">{{ $blocked['attempts'] }}</span></td>
+                                <td>{{ $blocked['first_attempt'] ? \Carbon\Carbon::parse($blocked['first_attempt'])->format('M j, Y g:i A') : '—' }}</td>
+                                <td>{{ $blocked['last_attempt'] ? \Carbon\Carbon::parse($blocked['last_attempt'])->format('M j, Y g:i A') : '—' }}</td>
+                                <td>
+                                    @if($keys->where('active', true)->count() > 0)
+                                        <form method="POST" action="{{ route('apiwebhooks.whitelist-ip') }}" style="display:inline;">
+                                            {{ csrf_field() }}
+                                            <input type="hidden" name="ip" value="{{ $blocked['ip'] }}">
+                                            <div class="input-group input-group-sm" style="width:200px;">
+                                                <select name="api_key_id" class="form-control" style="font-size:11px;" required>
+                                                    @foreach($keys->where('active', true) as $k)
+                                                        <option value="{{ $k->id }}">{{ $k->name }}</option>
+                                                    @endforeach
+                                                </select>
+                                                <span class="input-group-btn">
+                                                    <button type="submit" class="btn btn-success btn-sm" onclick="return confirm('Whitelist {{ $blocked['ip'] }} for the selected key?');">
+                                                        Whitelist
+                                                    </button>
+                                                </span>
+                                            </div>
+                                        </form>
+                                    @else
+                                        <span class="text-muted">No active keys</span>
+                                    @endif
+                                </td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
+            @endif
+
+            {{-- ══════════════════════════════════════════════════
+                 CREATE KEY
+                 ══════════════════════════════════════════════════ --}}
             <div class="panel panel-default">
                 <div class="panel-heading"><strong>Create API Key</strong></div>
                 <div class="panel-body">
@@ -30,13 +103,16 @@
                             <div class="col-md-4">
                                 <div class="form-group">
                                     <label>Name</label>
-                                    <input type="text" name="name" class="form-control" placeholder="e.g. n8n Integration" required maxlength="100">
+                                    <input type="text" name="name" class="form-control" placeholder="e.g. Billing System" required maxlength="100">
                                 </div>
                             </div>
                             <div class="col-md-5">
                                 <div class="form-group">
-                                    <label>Allowed IPs <small class="text-muted">(comma-separated, blank = all)</small></label>
-                                    <input type="text" name="allowed_ips" class="form-control" placeholder="e.g. 192.168.1.1, 10.0.0.0/24">
+                                    <label>Allowed IPs <span class="text-danger">*</span> <small class="text-muted">(comma-separated, CIDR supported)</small></label>
+                                    <input type="text" name="allowed_ips" class="form-control" placeholder="e.g. 192.168.1.1, 10.0.0.0/24" required>
+                                    <p class="help-block" style="font-size:11px; margin-top:3px;">
+                                        <strong>Required.</strong> Keys with no IPs will deny all requests.
+                                    </p>
                                 </div>
                             </div>
                             <div class="col-md-3">
@@ -50,7 +126,9 @@
                 </div>
             </div>
 
-            {{-- API Keys List --}}
+            {{-- ══════════════════════════════════════════════════
+                 API KEYS LIST
+                 ══════════════════════════════════════════════════ --}}
             <div class="panel panel-default">
                 <div class="panel-heading"><strong>API Keys</strong></div>
                 <table class="table table-striped">
@@ -69,7 +147,13 @@
                             <tr>
                                 <td>{{ $key->name }}</td>
                                 <td><code style="font-size:11px;">{{ substr($key->api_key, 0, 12) }}...{{ substr($key->api_key, -4) }}</code></td>
-                                <td><small>{{ $key->allowed_ips ?: 'All' }}</small></td>
+                                <td>
+                                    @if($key->allowed_ips)
+                                        <small>{{ $key->allowed_ips }}</small>
+                                    @else
+                                        <span class="label label-danger" title="This key will deny all requests until IPs are added">No IPs &mdash; BLOCKED</span>
+                                    @endif
+                                </td>
                                 <td>
                                     @if($key->active)
                                         <span class="label label-success">Active</span>
@@ -79,6 +163,9 @@
                                 </td>
                                 <td><small>{{ $key->created_at->format('M j, Y') }}</small></td>
                                 <td>
+                                    {{-- Edit button (toggles inline form) --}}
+                                    <button type="button" class="btn btn-xs btn-info" onclick="$('#edit-key-{{ $key->id }}').toggle();">Edit</button>
+
                                     <form method="POST" action="{{ route('apiwebhooks.keys.toggle', $key->id) }}" style="display:inline;">
                                         {{ csrf_field() }}
                                         <button type="submit" class="btn btn-xs btn-default">{{ $key->active ? 'Disable' : 'Enable' }}</button>
@@ -89,6 +176,24 @@
                                     </form>
                                 </td>
                             </tr>
+                            {{-- Inline edit form (hidden by default) --}}
+                            <tr id="edit-key-{{ $key->id }}" style="display:none; background:#f9f9f9;">
+                                <td colspan="6">
+                                    <form method="POST" action="{{ route('apiwebhooks.keys.update', $key->id) }}" class="form-inline" style="padding:8px 0;">
+                                        {{ csrf_field() }}
+                                        <div class="form-group" style="margin-right:10px;">
+                                            <label style="margin-right:5px;">Name:</label>
+                                            <input type="text" name="name" class="form-control input-sm" value="{{ $key->name }}" required maxlength="100" style="width:200px;">
+                                        </div>
+                                        <div class="form-group" style="margin-right:10px;">
+                                            <label style="margin-right:5px;">Allowed IPs:</label>
+                                            <input type="text" name="allowed_ips" class="form-control input-sm" value="{{ $key->allowed_ips }}" required style="width:300px;" placeholder="Required: e.g. 192.168.1.1, 10.0.0.0/24">
+                                        </div>
+                                        <button type="submit" class="btn btn-sm btn-primary">Save</button>
+                                        <button type="button" class="btn btn-sm btn-default" onclick="$('#edit-key-{{ $key->id }}').hide();">Cancel</button>
+                                    </form>
+                                </td>
+                            </tr>
                         @empty
                             <tr><td colspan="6" class="text-muted text-center">No API keys yet.</td></tr>
                         @endforelse
@@ -96,14 +201,17 @@
                 </table>
             </div>
 
-            {{-- API Documentation --}}
+            {{-- ══════════════════════════════════════════════════
+                 API DOCUMENTATION
+                 ══════════════════════════════════════════════════ --}}
             <div class="panel panel-default">
                 <div class="panel-heading"><strong>API Documentation</strong></div>
                 <div class="panel-body">
                     <p><strong>Base URL:</strong> <code>{{ url('/api/v1') }}</code></p>
-                    <p><strong>Authentication:</strong> Pass your API key via <code>X-Api-Key</code> header (recommended) or <code>?api_key=</code> query param.</p>
+                    <p><strong>Authentication:</strong> Pass your API key via <code>X-Api-Key</code> header. Query param auth is <strong>not supported</strong> (security: keys in URLs leak via logs and Referer headers).</p>
                     <p><strong>Content-Type:</strong> <code>application/json</code> for POST/PUT requests.</p>
                     <p><strong>Rate Limit:</strong> 60 requests/minute per key. Returns <code>429</code> when exceeded.</p>
+                    <p><strong>IP Whitelist:</strong> Every key requires at least one whitelisted IP. Keys with no IPs deny all requests.</p>
                     <hr>
 
                     @php $base = url('/api/v1'); @endphp
@@ -111,7 +219,6 @@
                     {{-- CONVERSATIONS --}}
                     <h4 style="margin-top:20px; border-bottom:2px solid #337ab7; padding-bottom:5px; color:#337ab7;">Conversations</h4>
 
-                    {{-- List Conversations --}}
                     <div class="api-endpoint" style="margin-bottom:20px;">
                         <p><span class="label label-primary">GET</span> <code>/conversations</code> &mdash; List/search conversations</p>
                         <p><small class="text-muted">Query params: <code>mailbox_id</code>, <code>status</code> (active|pending|closed|spam), <code>state</code> (published|draft|deleted), <code>assignee</code> (user ID), <code>customer_id</code>, <code>search</code>, <code>sort_by</code>, <code>order</code> (asc|desc), <code>per_page</code> (max 200), <code>page</code></small></p>
@@ -143,7 +250,6 @@
 }</pre>
                     </div>
 
-                    {{-- Get Conversation --}}
                     <div class="api-endpoint" style="margin-bottom:20px;">
                         <p><span class="label label-primary">GET</span> <code>/conversations/:id</code> &mdash; Get conversation with all threads</p>
 <pre style="font-size:11px; background:#f5f5f5; padding:10px; max-height:180px; overflow:auto;">curl -H "X-Api-Key: YOUR_KEY" "{{ $base }}/conversations/44"
@@ -151,7 +257,6 @@
 # Response includes _embedded.threads array with full thread bodies</pre>
                     </div>
 
-                    {{-- Create Conversation --}}
                     <div class="api-endpoint" style="margin-bottom:20px;">
                         <p><span class="label label-success">POST</span> <code>/conversations</code> &mdash; Create a new conversation</p>
                         <table class="table table-condensed" style="font-size:12px; margin-bottom:5px;">
@@ -175,59 +280,39 @@
     "mailbox_id": 4,
     "subject": "Order #12345 issue",
     "customer_email": "customer@example.com",
-    "customer_first_name": "John",
-    "customer_last_name": "Doe",
     "body": "&lt;p&gt;I have an issue with my order.&lt;/p&gt;",
     "assignee": 6,
     "status": "active"
-  }'
-
-# Response: { "status": "success", "data": { "id": 45, ... } }</pre>
+  }'</pre>
                     </div>
 
-                    {{-- Update Conversation --}}
                     <div class="api-endpoint" style="margin-bottom:20px;">
-                        <p><span class="label label-warning">PUT</span> <code>/conversations/:id</code> &mdash; Update conversation (status, assignee, subject)</p>
+                        <p><span class="label label-warning">PUT</span> <code>/conversations/:id</code> &mdash; Update conversation (status, assignee, subject, follower)</p>
 <pre style="font-size:11px; background:#f5f5f5; padding:10px; max-height:150px; overflow:auto;">curl -X PUT "{{ $base }}/conversations/44" \
   -H "X-Api-Key: YOUR_KEY" \
   -H "Content-Type: application/json" \
   -d '{ "status": "closed", "assignee": 3 }'
 
-# Response: { "status": "success", "data": { "id": 44, "status": "closed", ... } }</pre>
+# Add a follower (watcher):
+curl -X PUT "{{ $base }}/conversations/44" \
+  -H "X-Api-Key: YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{ "follower_user_id": 5 }'</pre>
                     </div>
 
-                    {{-- Delete Conversation --}}
                     <div class="api-endpoint" style="margin-bottom:20px;">
                         <p><span class="label label-danger">DELETE</span> <code>/conversations/:id</code> &mdash; Soft-delete conversation</p>
-<pre style="font-size:11px; background:#f5f5f5; padding:10px;">curl -X DELETE "{{ $base }}/conversations/44" -H "X-Api-Key: YOUR_KEY"
-
-# Response: { "status": "success", "message": "Conversation deleted." }</pre>
+<pre style="font-size:11px; background:#f5f5f5; padding:10px;">curl -X DELETE "{{ $base }}/conversations/44" -H "X-Api-Key: YOUR_KEY"</pre>
                     </div>
 
                     {{-- THREADS --}}
                     <h4 style="margin-top:25px; border-bottom:2px solid #337ab7; padding-bottom:5px; color:#337ab7;">Threads (Replies &amp; Notes)</h4>
 
-                    {{-- List Threads --}}
                     <div class="api-endpoint" style="margin-bottom:20px;">
                         <p><span class="label label-primary">GET</span> <code>/conversations/:id/threads</code> &mdash; List all threads for a conversation</p>
-<pre style="font-size:11px; background:#f5f5f5; padding:10px; max-height:180px; overflow:auto;">curl -H "X-Api-Key: YOUR_KEY" "{{ $base }}/conversations/44/threads"
-
-# Response:
-{
-  "status": "success",
-  "data": [
-    {
-      "id": 120,
-      "type": "customer",
-      "body": "Hi, I need help with...",
-      "createdBy": { "id": 91, "type": "customer", "name": "Rodney Robertson", "email": "rodney@example.org" },
-      "createdAt": "2026-03-05T14:07:23+00:00"
-    }
-  ]
-}</pre>
+<pre style="font-size:11px; background:#f5f5f5; padding:10px; max-height:180px; overflow:auto;">curl -H "X-Api-Key: YOUR_KEY" "{{ $base }}/conversations/44/threads"</pre>
                     </div>
 
-                    {{-- Create Thread --}}
                     <div class="api-endpoint" style="margin-bottom:20px;">
                         <p><span class="label label-success">POST</span> <code>/conversations/:id/threads</code> &mdash; Add a reply or note</p>
                         <table class="table table-condensed" style="font-size:12px; margin-bottom:5px;">
@@ -246,9 +331,7 @@ curl -X POST "{{ $base }}/conversations/44/threads" \
 curl -X POST "{{ $base }}/conversations/44/threads" \
   -H "X-Api-Key: YOUR_KEY" \
   -H "Content-Type: application/json" \
-  -d '{ "body": "&lt;p&gt;Thanks for contacting us. We are looking into it.&lt;/p&gt;", "type": "message", "user_id": 1 }'
-
-# Response: { "status": "success", "data": { "id": 121, "type": "note", ... } }</pre>
+  -d '{ "body": "Thanks for contacting us.", "type": "message", "user_id": 1 }'</pre>
                     </div>
 
                     {{-- CUSTOMERS --}}
@@ -261,7 +344,7 @@ curl -X POST "{{ $base }}/conversations/44/threads" \
                     </div>
 
                     <div class="api-endpoint" style="margin-bottom:20px;">
-                        <p><span class="label label-primary">GET</span> <code>/customers/:id</code> &mdash; Get customer with all details (emails, phones, social, address)</p>
+                        <p><span class="label label-primary">GET</span> <code>/customers/:id</code> &mdash; Get customer with all details</p>
 <pre style="font-size:11px; background:#f5f5f5; padding:10px;">curl -H "X-Api-Key: YOUR_KEY" "{{ $base }}/customers/91"</pre>
                     </div>
 
@@ -292,24 +375,13 @@ curl -X POST "{{ $base }}/conversations/44/threads" \
 <pre style="font-size:11px; background:#f5f5f5; padding:10px;">curl -X POST "{{ $base }}/users" \
   -H "X-Api-Key: YOUR_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-    "email": "newagent@example.com",
-    "first_name": "Sarah",
-    "last_name": "Connor",
-    "role": "user",
-    "mailbox_ids": "4,5"
-  }'
-
-# Response: { "status": "success", "data": { "id": 9, "password": "auto_generated_pw", ... } }</pre>
+  -d '{ "email": "agent@example.com", "first_name": "Sarah", "last_name": "Connor" }'</pre>
                     </div>
 
                     <div class="api-endpoint" style="margin-bottom:20px;">
                         <p><span class="label label-success">POST</span> <code>/users/:id/disable</code> / <code>/users/:id/enable</code> &mdash; Disable or enable an agent</p>
 <pre style="font-size:11px; background:#f5f5f5; padding:10px;">curl -X POST "{{ $base }}/users/9/disable" -H "X-Api-Key: YOUR_KEY"
-# Response: { "status": "success", "message": "User disabled." }
-
-curl -X POST "{{ $base }}/users/9/enable" -H "X-Api-Key: YOUR_KEY"
-# Response: { "status": "success", "message": "User enabled." }</pre>
+curl -X POST "{{ $base }}/users/9/enable" -H "X-Api-Key: YOUR_KEY"</pre>
                         <p><small class="text-muted">Note: Admin users cannot be disabled via API.</small></p>
                     </div>
 
@@ -324,31 +396,7 @@ curl -X POST "{{ $base }}/users/9/enable" -H "X-Api-Key: YOUR_KEY"
                     <div class="api-endpoint" style="margin-bottom:20px;">
                         <p><span class="label label-primary">GET</span> <code>/mailboxes/:id?include_config=1</code> &mdash; Get mailbox with SMTP/IMAP config</p>
                         <p><small class="text-muted">Pass <code>include_config=1</code> to include server settings. Passwords are never returned.</small></p>
-<pre style="font-size:11px; background:#f5f5f5; padding:10px; max-height:250px; overflow:auto;">curl -H "X-Api-Key: YOUR_KEY" "{{ $base }}/mailboxes/4?include_config=1"
-
-# Response:
-{
-  "status": "success",
-  "data": {
-    "id": 4,
-    "name": "Support",
-    "email": "support@example.com",
-    "smtp": {
-      "server": "smtp.example.com",
-      "port": 587,
-      "username": "user@example.com",
-      "encryption": "tls"
-    },
-    "imap": {
-      "server": "imap.example.com",
-      "port": 993,
-      "username": "user@example.com",
-      "protocol": "imap",
-      "encryption": "ssl",
-      "validateCert": true
-    }
-  }
-}</pre>
+<pre style="font-size:11px; background:#f5f5f5; padding:10px;">curl -H "X-Api-Key: YOUR_KEY" "{{ $base }}/mailboxes/4?include_config=1"</pre>
                     </div>
 
                     {{-- EMAIL HISTORY --}}
@@ -360,27 +408,17 @@ curl -X POST "{{ $base }}/users/9/enable" -H "X-Api-Key: YOUR_KEY"
 <pre style="font-size:11px; background:#f5f5f5; padding:10px;">curl -H "X-Api-Key: YOUR_KEY" "{{ $base }}/emails?direction=out&mailbox_id=4&since=2026-03-01"</pre>
                     </div>
 
-                    {{-- SMTP/IMAP TESTING --}}
+                    {{-- TESTING --}}
                     <h4 style="margin-top:25px; border-bottom:2px solid #d9534f; padding-bottom:5px; color:#d9534f;">Testing &amp; Diagnostics</h4>
 
                     <div class="api-endpoint" style="margin-bottom:20px;">
                         <p><span class="label label-success">POST</span> <code>/mailboxes/:id/test-smtp</code> &mdash; Test SMTP connection</p>
-<pre style="font-size:11px; background:#f5f5f5; padding:10px;">curl -X POST "{{ $base }}/mailboxes/4/test-smtp" -H "X-Api-Key: YOUR_KEY"
-
-# Success: { "status": "success", "message": "SMTP connection successful." }
-# Failure: { "status": "error", "message": "SMTP error: Connection timed out" }</pre>
+<pre style="font-size:11px; background:#f5f5f5; padding:10px;">curl -X POST "{{ $base }}/mailboxes/4/test-smtp" -H "X-Api-Key: YOUR_KEY"</pre>
                     </div>
 
                     <div class="api-endpoint" style="margin-bottom:20px;">
                         <p><span class="label label-success">POST</span> <code>/mailboxes/:id/test-imap</code> &mdash; Test IMAP connection + get stats</p>
-<pre style="font-size:11px; background:#f5f5f5; padding:10px;">curl -X POST "{{ $base }}/mailboxes/4/test-imap" -H "X-Api-Key: YOUR_KEY"
-
-# Response:
-{
-  "status": "success",
-  "message": "IMAP connection successful.",
-  "data": { "messages": 152, "recent": 0, "unread": 3 }
-}</pre>
+<pre style="font-size:11px; background:#f5f5f5; padding:10px;">curl -X POST "{{ $base }}/mailboxes/4/test-imap" -H "X-Api-Key: YOUR_KEY"</pre>
                     </div>
 
                     <div class="api-endpoint" style="margin-bottom:20px;">
@@ -394,9 +432,7 @@ curl -X POST "{{ $base }}/users/9/enable" -H "X-Api-Key: YOUR_KEY"
 <pre style="font-size:11px; background:#f5f5f5; padding:10px;">curl -X POST "{{ $base }}/mailboxes/4/send-test" \
   -H "X-Api-Key: YOUR_KEY" \
   -H "Content-Type: application/json" \
-  -d '{ "to": "test@example.com", "subject": "API Test", "body": "This is a test." }'
-
-# Response: { "status": "success", "message": "Test email sent to test@example.com." }</pre>
+  -d '{ "to": "test@example.com" }'</pre>
                     </div>
 
                     {{-- ERROR CODES --}}
@@ -414,7 +450,9 @@ curl -X POST "{{ $base }}/users/9/enable" -H "X-Api-Key: YOUR_KEY"
                 </div>
             </div>
 
-            {{-- Logs --}}
+            {{-- ══════════════════════════════════════════════════
+                 API LOGS
+                 ══════════════════════════════════════════════════ --}}
             <div class="panel panel-default">
                 <div class="panel-heading">
                     <strong>API Logs</strong>

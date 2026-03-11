@@ -16,10 +16,20 @@ use Modules\ApiWebhooks\Transformers\MailboxTransformer;
 use Modules\ApiWebhooks\Transformers\ThreadTransformer;
 use Modules\ApiWebhooks\Transformers\UserTransformer;
 
+/**
+ * ApiController — Handles all REST API endpoints for the FreeScout API module.
+ * Provides CRUD for conversations, threads, customers, users, mailboxes, and email history.
+ */
 class ApiController extends Controller
 {
     // ── Conversations ────────────────────────────────────────────
 
+    /**
+     * List conversations with optional filtering and pagination.
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
     public function listConversations(Request $request)
     {
         $query = Conversation::query();
@@ -219,6 +229,23 @@ class ApiController extends Controller
 
         if ($request->filled('subject')) {
             $conversation->subject = $request->input('subject');
+        }
+
+        // Add a follower (watcher) to the conversation.
+        if ($request->filled('follower_user_id')) {
+            $follower = User::find($request->input('follower_user_id'));
+            if ($follower) {
+                // FreeScout stores followers in the conversation_user pivot table.
+                try {
+                    if (method_exists($conversation, 'followers')) {
+                        $conversation->followers()->syncWithoutDetaching([$follower->id]);
+                    } elseif (method_exists($conversation, 'users')) {
+                        $conversation->users()->syncWithoutDetaching([$follower->id]);
+                    }
+                } catch (\Exception $e) {
+                    // Silently fail — follower feature may not exist in all FreeScout versions.
+                }
+            }
         }
 
         $conversation->save();

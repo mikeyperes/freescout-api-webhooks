@@ -6,10 +6,14 @@ Route::group(['middleware' => ['web', 'auth'], 'prefix' => 'manage'], function (
         ->name('apiwebhooks.settings');
     Route::post('/api-webhooks/keys', 'Modules\ApiWebhooks\Http\Controllers\ApiKeysController@create')
         ->name('apiwebhooks.keys.create');
+    Route::post('/api-webhooks/keys/{id}/update', 'Modules\ApiWebhooks\Http\Controllers\ApiKeysController@update')
+        ->name('apiwebhooks.keys.update');
     Route::post('/api-webhooks/keys/{id}/toggle', 'Modules\ApiWebhooks\Http\Controllers\ApiKeysController@toggle')
         ->name('apiwebhooks.keys.toggle');
     Route::post('/api-webhooks/keys/{id}/delete', 'Modules\ApiWebhooks\Http\Controllers\ApiKeysController@destroy')
         ->name('apiwebhooks.keys.delete');
+    Route::post('/api-webhooks/whitelist-ip', 'Modules\ApiWebhooks\Http\Controllers\ApiKeysController@whitelistIp')
+        ->name('apiwebhooks.whitelist-ip');
     Route::post('/api-webhooks/logs/clear', 'Modules\ApiWebhooks\Http\Controllers\ApiKeysController@clearLogs')
         ->name('apiwebhooks.logs.clear');
 });
