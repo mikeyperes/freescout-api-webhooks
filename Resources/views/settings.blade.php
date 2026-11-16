@@ -64,7 +64,11 @@
                                 <td>{{ $blocked['last_attempt'] ? \Carbon\Carbon::parse($blocked['last_attempt'])->format('M j, Y g:i A') : '—' }}</td>
                                 <td>
                                     @if($keys->where('active', true)->count() > 0)
+<<<<<<< HEAD
                                         <form method="POST" action="{{ route('apiwebhooks.whitelist-ip') }}" class="aw-whitelist-form" style="display:inline;" data-ip="{{ $blocked['ip'] }}">
+=======
+                                        <form method="POST" action="{{ route('apiwebhooks.whitelist-ip') }}" style="display:inline;">
+>>>>>>> origin/main
                                             {{ csrf_field() }}
                                             <input type="hidden" name="ip" value="{{ $blocked['ip'] }}">
                                             <div class="input-group input-group-sm" style="width:200px;">
@@ -74,7 +78,11 @@
                                                     @endforeach
                                                 </select>
                                                 <span class="input-group-btn">
+<<<<<<< HEAD
                                                     <button type="submit" class="btn btn-success btn-sm">
+=======
+                                                    <button type="submit" class="btn btn-success btn-sm" onclick="return confirm('Whitelist {{ $blocked['ip'] }} for the selected key?');">
+>>>>>>> origin/main
                                                         Whitelist
                                                     </button>
                                                 </span>
@@ -163,13 +171,22 @@
                                 </td>
                                 <td><small>{{ $key->created_at->format('M j, Y') }}</small></td>
                                 <td>
+<<<<<<< HEAD
                                     <button type="button" class="btn btn-xs btn-info aw-edit-btn" data-key-id="{{ $key->id }}">Edit</button>
+=======
+                                    {{-- Edit button (toggles inline form) --}}
+                                    <button type="button" class="btn btn-xs btn-info" onclick="$('#edit-key-{{ $key->id }}').toggle();">Edit</button>
+>>>>>>> origin/main
 
                                     <form method="POST" action="{{ route('apiwebhooks.keys.toggle', $key->id) }}" style="display:inline;">
                                         {{ csrf_field() }}
                                         <button type="submit" class="btn btn-xs btn-default">{{ $key->active ? 'Disable' : 'Enable' }}</button>
                                     </form>
+<<<<<<< HEAD
                                     <form method="POST" action="{{ route('apiwebhooks.keys.delete', $key->id) }}" class="aw-delete-form" style="display:inline;">
+=======
+                                    <form method="POST" action="{{ route('apiwebhooks.keys.delete', $key->id) }}" style="display:inline;" onsubmit="return confirm('Delete this key and all its logs?');">
+>>>>>>> origin/main
                                         {{ csrf_field() }}
                                         <button type="submit" class="btn btn-xs btn-danger">Delete</button>
                                     </form>
@@ -189,7 +206,11 @@
                                             <input type="text" name="allowed_ips" class="form-control input-sm" value="{{ $key->allowed_ips }}" required style="width:300px;" placeholder="Required: e.g. 192.168.1.1, 10.0.0.0/24">
                                         </div>
                                         <button type="submit" class="btn btn-sm btn-primary">Save</button>
+<<<<<<< HEAD
                                         <button type="button" class="btn btn-sm btn-default aw-cancel-btn" data-key-id="{{ $key->id }}">Cancel</button>
+=======
+                                        <button type="button" class="btn btn-sm btn-default" onclick="$('#edit-key-{{ $key->id }}').hide();">Cancel</button>
+>>>>>>> origin/main
                                     </form>
                                 </td>
                             </tr>
@@ -455,9 +476,15 @@ curl -X POST "{{ $base }}/users/9/enable" -H "X-Api-Key: YOUR_KEY"</pre>
             <div class="panel panel-default">
                 <div class="panel-heading">
                     <strong>API Logs</strong>
+<<<<<<< HEAD
                     <form method="POST" action="{{ route('apiwebhooks.logs.clear') }}" class="aw-clear-logs-form" style="display:inline; float:right;">
                         {{ csrf_field() }}
                         <button type="submit" class="btn btn-xs btn-default">Clear Logs</button>
+=======
+                    <form method="POST" action="{{ route('apiwebhooks.logs.clear') }}" style="display:inline; float:right;">
+                        {{ csrf_field() }}
+                        <button type="submit" class="btn btn-xs btn-default" onclick="return confirm('Clear all logs?');">Clear Logs</button>
+>>>>>>> origin/main
                     </form>
                 </div>
                 <table class="table table-condensed" style="font-size:12px;">
@@ -476,7 +503,11 @@ curl -X POST "{{ $base }}/users/9/enable" -H "X-Api-Key: YOUR_KEY"</pre>
                     </thead>
                     <tbody>
                         @forelse($logs as $log)
+<<<<<<< HEAD
                             <tr class="aw-log-row {{ $log->status_code >= 400 ? 'danger' : '' }}" style="cursor:pointer;" data-log-id="{{ $log->id }}">
+=======
+                            <tr class="{{ $log->status_code >= 400 ? 'danger' : '' }}" style="cursor:pointer;" onclick="$('#log-detail-{{ $log->id }}').toggle(); $(this).find('.glyphicon').toggleClass('glyphicon-chevron-down glyphicon-chevron-up');">
+>>>>>>> origin/main
                                 <td style="white-space:nowrap;">{{ $log->time_est }}</td>
                                 <td>{{ $log->api_key_id ? optional($log->apiKey)->name : '-' }}</td>
                                 <td><strong>{{ $log->method }}</strong></td>
@@ -538,6 +569,7 @@ Response: {{ $log->status_code }} ({{ $log->response_time_ms }}ms)</pre>
     </div>
 </div>
 @endsection
+<<<<<<< HEAD
 
 @section('javascript')
     // Edit key toggle
@@ -576,3 +608,5 @@ Response: {{ $log->status_code }} ({{ $log->response_time_ms }}ms)</pre>
         $(this).find('.glyphicon').toggleClass('glyphicon-chevron-down glyphicon-chevron-up');
     });
 @endsection
+=======
+>>>>>>> origin/main

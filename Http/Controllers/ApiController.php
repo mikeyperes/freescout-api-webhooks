@@ -67,11 +67,15 @@ class ApiController extends Controller
             });
         }
 
+<<<<<<< HEAD
         // Validate sort parameters to prevent SQL injection
         $allowedSorts = ['updated_at', 'created_at', 'id', 'number', 'status', 'last_reply_at', 'closed_at'];
         $sortBy = in_array($request->input('sort_by'), $allowedSorts, true) ? $request->input('sort_by') : 'updated_at';
         $order = in_array(strtolower((string) $request->input('order', 'desc')), ['asc', 'desc'], true) ? strtolower($request->input('order', 'desc')) : 'desc';
         $query->orderBy($sortBy, $order);
+=======
+        $query->orderBy($request->input('sort_by', 'updated_at'), $request->input('order', 'desc'));
+>>>>>>> origin/main
 
         $perPage = min((int) ($request->input('per_page', 50)), 200);
         $paginator = $query->paginate($perPage);
@@ -594,10 +598,13 @@ class ApiController extends Controller
         }
 
         try {
+<<<<<<< HEAD
             if (!function_exists('imap_open')) {
                 throw new \Exception('IMAP extension is not installed for this PHP runtime.');
             }
 
+=======
+>>>>>>> origin/main
             $encMap = [1 => '', 2 => 'ssl', 3 => 'tls', 4 => 'notls'];
             $enc = $encMap[$mailbox->in_encryption] ?? '';
 
