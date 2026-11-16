@@ -13,6 +13,23 @@ use Modules\ApiWebhooks\Models\ApiLog;
  */
 class ApiKeysController extends Controller
 {
+    public function __construct()
+    {
+        $this->middleware(function ($request, $next) {
+            abort_unless(auth()->user() && auth()->user()->isAdmin(), 403);
+            return $next($request);
+        });
+    }
+
+    protected function validateScopes(Request $request)
+    {
+        $request->validate([
+            'scopes' => 'required|array|min:1',
+            'scopes.*' => 'in:' . implode(',', array_keys(ApiKey::availableScopes())),
+        ]);
+        return array_values(array_unique($request->input('scopes')));
+    }
+
     /**
      * Display the API & Webhooks settings page.
      * Includes: keys, logs, and blocked IPs.
@@ -65,18 +82,22 @@ class ApiKeysController extends Controller
             'allowed_ips' => 'required|string|max:1000',
         ]);
 
+        $scopes = $this->validateScopes($request);
+        $plainKey = ApiKey::generateKey();
+        $plainSecret = ApiKey::generateSecret();
         $key = ApiKey::create([
             'name'               => e($request->input('name')),
-            'api_key'            => ApiKey::generateKey(),
-            'api_secret'         => ApiKey::generateSecret(),
+            'api_key'            => $plainKey,
+            'api_secret'         => hash('sha256', $plainSecret),
+            'scopes'             => $scopes,
             'allowed_ips'        => e(trim($request->input('allowed_ips'))),
             'created_by_user_id' => auth()->id(),
             'active'             => true,
         ]);
 
         \Session::flash('flash_success', __('API key created.'));
-        \Session::flash('new_api_key', $key->api_key);
-        \Session::flash('new_api_secret', $key->api_secret);
+        \Session::flash('new_api_key', $plainKey);
+        \Session::flash('new_api_secret', $plainSecret);
 
         return redirect()->route('apiwebhooks.settings');
     }
@@ -97,6 +118,7 @@ class ApiKeysController extends Controller
             'allowed_ips' => 'required|string|max:1000',
         ]);
 
+        $key->scopes = $this->validateScopes($request);
         $key->name = e($request->input('name'));
         $key->allowed_ips = e(trim($request->input('allowed_ips')));
         $key->save();
@@ -146,7 +168,7 @@ class ApiKeysController extends Controller
     public function whitelistIp(Request $request)
     {
         $request->validate([
-            'ip'         => 'required|string|max:45',
+            'ip'         => 'required|ip',
             'api_key_id' => 'required|integer',
         ]);
 

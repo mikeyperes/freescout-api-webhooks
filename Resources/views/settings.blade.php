@@ -118,6 +118,11 @@
                             <div class="col-md-3">
                                 <div class="form-group">
                                     <label>&nbsp;</label>
+                                    <fieldset><legend>Permissions</legend>
+                                        @foreach(\Modules\ApiWebhooks\Models\ApiKey::availableScopes() as $scope => $label)
+                                            <label style="display:block"><input type="checkbox" name="scopes[]" value="{{ $scope }}" {{ $scope === 'read' ? 'checked' : '' }}> {{ $label }}</label>
+                                        @endforeach
+                                    </fieldset>
                                     <button type="submit" class="btn btn-primary btn-block">Generate Key</button>
                                 </div>
                             </div>
@@ -146,7 +151,7 @@
                         @forelse($keys as $key)
                             <tr>
                                 <td>{{ $key->name }}</td>
-                                <td><code style="font-size:11px;">{{ substr($key->api_key, 0, 12) }}...{{ substr($key->api_key, -4) }}</code></td>
+                                <td><code style="font-size:11px;">Stored securely (SHA-256)</code></td>
                                 <td>
                                     @if($key->allowed_ips)
                                         <small>{{ $key->allowed_ips }}</small>
@@ -188,6 +193,11 @@
                                             <label style="margin-right:5px;">Allowed IPs:</label>
                                             <input type="text" name="allowed_ips" class="form-control input-sm" value="{{ $key->allowed_ips }}" required style="width:300px;" placeholder="Required: e.g. 192.168.1.1, 10.0.0.0/24">
                                         </div>
+                                        <fieldset><legend>Permissions</legend>
+                                            @foreach(\Modules\ApiWebhooks\Models\ApiKey::availableScopes() as $scope => $label)
+                                                <label style="display:block"><input type="checkbox" name="scopes[]" value="{{ $scope }}" {{ $key->hasScope($scope) ? 'checked' : '' }}> {{ $label }}</label>
+                                            @endforeach
+                                        </fieldset>
                                         <button type="submit" class="btn btn-sm btn-primary">Save</button>
                                         <button type="button" class="btn btn-sm btn-default aw-cancel-btn" data-key-id="{{ $key->id }}">Cancel</button>
                                     </form>

@@ -26,84 +26,26 @@ class ApiLog extends Model
     }
 
     /**
-     * Log an API request with full detail.
+     * Log request metadata without content or credentials.
      */
     public static function log($apiKeyId, $request, $statusCode, $responseSummary = '', $startTime = null)
     {
-        // Sanitize request body — strip sensitive fields
-        $body = $request->except(['api_key', 'api_secret', 'password', '_token']);
-
-        // Capture headers — strip sensitive ones
-        $headers = $request->headers->all();
-        $sensitiveHeaders = ['cookie', 'authorization', 'x-api-key', 'x-api-secret', 'php-auth-pw'];
-        foreach ($sensitiveHeaders as $sh) {
-            if (isset($headers[$sh])) {
-                $headers[$sh] = ['***REDACTED***'];
-            }
-        }
-
-        // Get user agent
-        $userAgent = $request->header('User-Agent', '');
-
-        // Get query string
-        $queryString = $request->getQueryString();
-
-        // Geo lookup via IP (lightweight, cached 24h)
-        $geoData = self::geoLookup($request->ip());
-
         self::create([
             'api_key_id'       => $apiKeyId,
             'method'           => $request->method(),
             'endpoint'         => $request->path(),
             'ip'               => $request->ip(),
-            'user_agent'       => mb_substr($userAgent, 0, 500),
-            'request_headers'  => json_encode($headers, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT),
-            'query_string'     => $queryString ? mb_substr($queryString, 0, 2000) : null,
-            'country'          => $geoData['country'] ?? null,
-            'city'             => $geoData['city'] ?? null,
+            'user_agent'       => null,
+            'request_headers'  => null,
+            'query_string'     => null,
+            'country'          => null,
+            'city'             => null,
             'status_code'      => $statusCode,
-            'request_body'     => !empty($body) ? json_encode($body, JSON_UNESCAPED_UNICODE) : null,
-            'response_summary' => mb_substr($responseSummary, 0, 500),
+            'request_body'     => null,
+            'response_summary' => 'HTTP ' . (int) $statusCode,
             'response_time_ms' => $startTime ? round((microtime(true) - $startTime) * 1000) : 0,
             'created_at'       => now(),
         ]);
-    }
-
-    /**
-     * Lightweight geo lookup using ip-api.com (free, no key, 45 req/min).
-     * Cached 24 hours per IP.
-     */
-    protected static function geoLookup($ip)
-    {
-        // Skip private/local IPs
-        if (in_array($ip, ['127.0.0.1', '::1']) || !filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
-            return ['country' => 'Local', 'city' => 'Local'];
-        }
-
-        $cacheKey = 'api_geo_' . md5($ip);
-        $cached = \Cache::get($cacheKey);
-        if ($cached) {
-            return $cached;
-        }
-
-        try {
-            $client = new \GuzzleHttp\Client(['timeout' => 3]);
-            $response = $client->get("http://ip-api.com/json/{$ip}?fields=status,country,city");
-            $data = json_decode($response->getBody()->getContents(), true);
-
-            if (!empty($data['status']) && $data['status'] === 'success') {
-                $result = [
-                    'country' => $data['country'] ?? null,
-                    'city'    => $data['city'] ?? null,
-                ];
-                \Cache::put($cacheKey, $result, 60 * 24); // 24 hours
-                return $result;
-            }
-        } catch (\Exception $e) {
-            // Silently fail — geo is non-critical
-        }
-
-        return ['country' => null, 'city' => null];
     }
 
     /**
@@ -114,7 +56,7 @@ class ApiLog extends Model
         if (!$this->created_at) {
             return '';
         }
-        return $this->created_at->copy()->setTimezone('America/New_York')->format('M j, Y g:i:s A');
+        return $this->created_at->copy()->setTimezone('-05:00')->format('M j, Y g:i:s A');
     }
 
     /**

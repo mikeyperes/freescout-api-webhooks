@@ -46,7 +46,7 @@ class ApiAuth
             ], 401);
         }
 
-        $apiKey = ApiKey::where('api_key', $key)->where('active', true)->first();
+        $apiKey = ApiKey::where('api_key', hash('sha256', $key))->where('active', true)->first();
 
         if (!$apiKey) {
             ApiLog::log(null, $request, 401, 'Key not found or disabled');
@@ -70,18 +70,19 @@ class ApiAuth
             ], 403);
         }
 
-        // Rate limiting: 60 requests per minute per key.
-        $recentCount = ApiLog::where('api_key_id', $apiKey->id)
-            ->where('created_at', '>=', now()->subMinute())
-            ->count();
-
-        if ($recentCount >= 60) {
-            ApiLog::log($apiKey->id, $request, 429, 'Rate limited');
-            return response()->json([
-                'status'  => 'error',
-                'message' => 'Rate limit exceeded. Max 60 requests/minute.',
-            ], 429);
+        $scope = self::requiredScope($request->route()->getActionMethod(), $request->method());
+        if (!$apiKey->hasScope($scope)) {
+            ApiLog::log($apiKey->id, $request, 403, 'Scope denied');
+            return response()->json(['status' => 'error', 'message' => 'Required scope: ' . $scope], 403);
         }
+
+        $limiter = app(\Illuminate\Cache\RateLimiter::class);
+        $limitKey = 'apiwebhooks:v1:' . $apiKey->id;
+        if ($limiter->tooManyAttempts($limitKey, 60, 1)) {
+            return response()->json(['status' => 'error', 'message' => 'Rate limit exceeded.'], 429)
+                ->header('Retry-After', $limiter->availableIn($limitKey));
+        }
+        $limiter->hit($limitKey, 1);
 
         // Store for use in controllers and post-request logging.
         $request->attributes->set('api_key', $apiKey);
@@ -89,10 +90,30 @@ class ApiAuth
 
         $response = $next($request);
 
-        // Log successful request with truncated response.
-        $summary = mb_substr($response->getContent(), 0, 200);
+        // Record status metadata without response content.
+        $summary = 'HTTP ' . $response->getStatusCode();
         ApiLog::log($apiKey->id, $request, $response->getStatusCode(), $summary, $startTime);
 
         return $response;
+    }
+
+    public static function requiredScope($action, $method)
+    {
+        if ($method === 'GET') {
+            return 'read';
+        }
+        $scopes = [
+            'createConversation' => 'conversations:write',
+            'updateConversation' => 'conversations:write',
+            'deleteConversation' => 'conversations:delete',
+            'createThread' => 'threads:write',
+            'createUser' => 'users:write',
+            'disableUser' => 'users:write',
+            'enableUser' => 'users:write',
+            'testSmtp' => 'mailboxes:test',
+            'testImap' => 'mailboxes:test',
+            'sendTestEmail' => 'admin',
+        ];
+        return isset($scopes[$action]) ? $scopes[$action] : 'admin';
     }
 }

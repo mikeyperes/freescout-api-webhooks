@@ -14,10 +14,37 @@ class ApiKey extends Model
     protected $table = 'api_keys';
 
     /** @var array */
-    protected $fillable = ['name', 'api_key', 'api_secret', 'allowed_ips', 'created_by_user_id', 'active'];
+    protected $fillable = ['name', 'api_key', 'api_secret', 'allowed_ips', 'created_by_user_id', 'active', 'scopes'];
 
     /** @var array Fields hidden from JSON serialization */
-    protected $hidden = ['api_secret'];
+    protected $hidden = ['api_key', 'api_secret'];
+
+    protected $casts = ['scopes' => 'array'];
+
+    public static function availableScopes()
+    {
+        return [
+            'read' => 'Read all v1 resources',
+            'conversations:write' => 'Create and update conversations',
+            'conversations:delete' => 'Delete conversations',
+            'threads:write' => 'Create threads',
+            'users:write' => 'Create and manage users',
+            'mailboxes:test' => 'Test SMTP and IMAP connections',
+            'agents:impersonate' => 'Post threads as an explicitly selected agent',
+            'admin' => 'Create administrators and send fixed test emails',
+        ];
+    }
+
+    public function hasScope($scope)
+    {
+        return in_array($scope, $this->scopes ?: [], true);
+    }
+
+    public function setApiKeyAttribute($value)
+    {
+        $this->attributes['api_key'] = preg_match('/^[a-f0-9]{48}$/D', $value)
+            ? hash('sha256', $value) : $value;
+    }
 
     /**
      * Get the user who created this API key.
@@ -89,14 +116,7 @@ class ApiKey extends Model
      */
     public static function ipInCidr($ip, $cidr)
     {
-        list($subnet, $bits) = explode('/', $cidr, 2);
-        $subnet = ip2long($subnet);
-        $ip = ip2long($ip);
-        if ($subnet === false || $ip === false) {
-            return false;
-        }
-        $mask = -1 << (32 - (int) $bits);
-        return ($ip & $mask) === ($subnet & $mask);
+        return \Symfony\Component\HttpFoundation\IpUtils::checkIp($ip, $cidr);
     }
 
     /**

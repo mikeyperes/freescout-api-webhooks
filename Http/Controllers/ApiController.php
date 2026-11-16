@@ -319,13 +319,16 @@ class ApiController extends Controller
         $thread->source_via = Thread::PERSON_USER;
         $thread->source_type = 3;
 
-        if ($request->filled('user_id')) {
-            $user = User::find($request->input('user_id'));
-            if ($user) {
-                $thread->user_id = $user->id;
-                $thread->created_by_user_id = $user->id;
-            }
+        // CRITICAL - see BUGLOG.md API-006. Never trust an unscoped caller-supplied identity.
+        $key = $request->attributes->get('api_key');
+        $userId = $key->created_by_user_id;
+        if ($request->filled('user_id') && (int) $request->input('user_id') !== (int) $userId) {
+            abort_unless($key->hasScope('agents:impersonate'), 403);
+            $userId = (int) $request->input('user_id');
         }
+        $user = User::findOrFail($userId);
+        $thread->user_id = $user->id;
+        $thread->created_by_user_id = $user->id;
 
         if ($type == Thread::TYPE_CUSTOMER && $conversation->customer_id) {
             $thread->customer_id = $conversation->customer_id;
@@ -431,6 +434,8 @@ class ApiController extends Controller
             'password'   => 'nullable|string|min:8',
             'role'       => 'nullable|string',
         ]);
+
+        abort_if($request->input('role') === 'admin' && !$request->attributes->get('api_key')->hasScope('admin'), 403);
 
         $roleMap = ['admin' => User::ROLE_ADMIN, 'user' => User::ROLE_USER];
 
@@ -646,8 +651,8 @@ class ApiController extends Controller
 
         try {
             $to = $request->input('to');
-            $subject = $request->input('subject', 'FreeScout API Test Email');
-            $body = $request->input('body', 'This is a test email sent via the FreeScout API at ' . now()->toDateTimeString());
+            $subject = 'FreeScout API Test Email';
+            $body = 'This is a FreeScout API connection test.';
 
             \Mail::raw($body, function ($message) use ($mailbox, $to, $subject) {
                 $message->to($to)

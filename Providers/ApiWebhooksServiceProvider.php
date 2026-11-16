@@ -38,6 +38,11 @@ class ApiWebhooksServiceProvider extends ServiceProvider
 
     public function register()
     {
-        //
+        $this->app->afterResolving(\Illuminate\Console\Scheduling\Schedule::class, function ($schedule) {
+            $schedule->call(function () {
+                $days = max(1, (int) \App\Option::get('apiwebhooks_log_retention_days', 30));
+                \Modules\ApiWebhooks\Models\ApiLog::where('created_at', '<', now()->subDays($days))->delete();
+            })->daily();
+        });
     }
 }

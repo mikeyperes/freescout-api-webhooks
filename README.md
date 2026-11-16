@@ -637,3 +637,44 @@ Pull requests welcome. Please ensure:
 - All inputs validated
 - All API calls logged
 - No hardcoded credentials, tokens, or sensitive data
+
+
+## Security update 1.1.0
+
+All `/manage/api-webhooks/*` actions require an administrator session. API keys are
+shown once at creation, stored as SHA-256, and excluded from JSON serialization.
+Existing callers keep sending the same `X-Api-Key`; migration does not rotate keys.
+The legacy API secret is unused by v1 authentication and is now hashed as well.
+
+### Scopes
+
+GET routes require `read`. Conversation creation/update require `conversations:write`,
+delete requires `conversations:delete`, thread creation requires `threads:write`,
+user creation/enable/disable require `users:write`, SMTP/IMAP tests require
+`mailboxes:test`. Creating an admin additionally requires `admin`; sending the fixed
+test message requires `admin`. Thread identity defaults to the key's creating agent;
+a different `user_id` requires `agents:impersonate`.
+
+New keys default to read only. Existing keys migrate with all explicit legacy scopes
+for caller compatibility; administrators can reduce them in the settings page.
+Key 2 was not rotated and its allowlist was not changed by this release.
+
+### Logging and retention
+
+Logs contain request metadata and HTTP status only. Bodies, headers, query strings,
+response content and user agents are not stored. Historical sensitive fields are erased
+by migration. No IP geolocation service is called. FreeScout's daily scheduler deletes
+logs older than the `apiwebhooks_log_retention_days` option (default 30 days).
+The normal FreeScout scheduler must be running. The retention option currently has
+no dedicated settings control. Log clearing in the legacy page still deletes records.
+
+### Tests
+
+Run `php Modules/ApiWebhooks/Tests/security.php` as the FreeScout account. It creates
+and removes one temporary scoped credential, makes real HTTP requests to `app.url`,
+and checks authorization and metadata-only logging. It never prints credentials.
+
+### Mobile API status
+
+This release hardens the existing v1 API. `/api/v2` mobile endpoints, device tokens,
+HMAC server credentials, push and outgoing webhooks are not implemented in 1.1.0.
