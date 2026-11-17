@@ -1,680 +1,399 @@
-# FreeScout API & Webhooks Module
+# FreeScout Agent API and Webhooks
 
-A free, open-source REST API module for [FreeScout](https://freescout.net/) helpdesk with enhanced security features including IP whitelisting, rate limiting, and full request logging.
-
-**Author:** [Michael Peres](https://github.com/mikeyperes)
-**License:** AGPL-3.0
+FreeScout 1.8.241 / Laravel 5.5 module. Version 2.0.0.
 
 ## Features
 
-- **Full REST API** for conversations, threads, customers, users, and mailboxes
-- **API key authentication** with per-key IP whitelisting (supports CIDR notation)
-- **Request logging** with method, endpoint, IP, status code, and response time
-- **Rate limiting** (60 requests/minute per key)
-- **SMTP/IMAP testing** and test email sending via API
-- **Email history** across all mailboxes with direction filtering
-- **Admin UI** at Manage > API & Webhooks for key management and log viewing
-- **XSS protection** — all inputs sanitized, all outputs JSON-encoded
-- **No CORS by default** — API only accessible server-side unless configured
+- Agent/device credentials: native FreeScout sign-in, SHA-256 storage, expiration,
+  revocation and per-user inventory. Devices do not require IP allowlists.
+- Server credentials: HMAC-SHA256, unique nonces, a 300-second past / 30-second future
+  timestamp window, explicit IP allowlists and the same agent permission policy.
+- Root, Own and Broad access with native mailbox policies and AssignedOnly hooks.
+- Conversation list/get/create, assignment, status, mailbox move, star, read
+  state, merge, tags, custom fields and snooze.
+- Native email replies with To/CC/BCC and real attachments; notes and drafts.
+- Private attachment upload/download; customer create/get/list/update; users;
+  saved replies; notifications and their saved preferences.
+- Cursor-based changed-since sync, per-token cache rate limiting and a serialized,
+  HMAC hash-chained request journal containing metadata rather than ticket content.
+- APNs and FCM delivery using FreeScout's selected notification recipients, including
+  assignment/customer-reply/new-conversation settings. API notes support explicit mentions.
+- Signed outgoing HTTPS webhooks, retry scheduling, delivery logs and SSRF protection.
+- Admin settings with encrypted provider credentials, masked fields, Change controls,
+  Test actions, setup instructions and a secret-free status command.
 
-## Requirements
+## Ownership and compatibility
 
-- FreeScout >= 1.8.198
-- PHP >= 7.4 (tested on 8.2)
-- PHP `imap` extension (for IMAP testing endpoint)
+This module uses FreeScout's existing models, authorization policies, events,
+ConversationsController reply/draft/update handlers and native attachment handling.
+It does not replace the mail sender or copy its send logic. Existing SMTP settings,
+email queues, undo delay, signatures and module hooks continue to apply.
 
-## Installation
+Tags, custom fields, saved replies and snooze are module-owned extensions because
+those optional FreeScout modules are not installed here. Their data lives in this
+module's tables. They do not silently import or overwrite another module's data.
+Snooze sets the native status to Pending, remembers the previous status and restores
+it on expiry unless another action already changed the status. A customer reply
+cancels the module's snooze marker. The API exposes Snoozed as an additional folder.
 
-1. Copy the `ApiWebhooks` folder into your FreeScout `Modules/` directory:
+No Billing source changes are required. Existing v1 callers keep their original
+X-Api-Key value. Key 2 was hashed in place, not rotated. Its scopes and IP allowlist
+were preserved after the compatibility migration.
 
-```bash
-cp -r ApiWebhooks /path/to/freescout/Modules/
-```
+## Setup and settings
 
-2. Create the public symlink:
+Enable the module and run its migrations through the normal FreeScout module/update
+process. The administrator page is `/manage/api-webhooks/mobile`; legacy key management
+remains `/manage/api-webhooks`. Both management controllers require an administrator.
 
-```bash
-ln -sf /path/to/freescout/Modules/ApiWebhooks/Public /path/to/freescout/public/modules/apiwebhooks
-```
+FreeScout's normal scheduler must run every minute. The named module task dispatches delivery and snooze work through FreeScout's native
+background queue; its normal queue worker must also run. Delivery jobs are bounded so
+remote providers do not block the scheduler. A daily task handles log/nonces retention.
+Run `php artisan apiwebhooks:status` for JSON containing limits, provider credential
+presence and registered endpoint methods/paths. It never returns credentials or hashes.
 
-3. Run the migration:
+Settings are native FreeScout Options:
 
-```bash
-php artisan migrate --force --path=Modules/ApiWebhooks/Database/Migrations
-```
+- `apiwebhooks_token_days`: credential lifetime, default 30 days.
+- `apiwebhooks_requests_per_minute`: per-credential cache bucket, default 60.
+- `apiwebhooks_log_retention_days`: request/delivery retention, default 30 days.
+- `apiwebhooks_apns_credentials`: encrypted JSON with `team_id`, `key_id`,
+  `private_key`, `topic` and optional boolean `sandbox`. Use an Apple P-256 signing key.
+- `apiwebhooks_fcm_credentials`: encrypted Google service-account JSON with
+  `client_email`, `private_key` and `project_id`. Enable FCM HTTP v1 for that project.
 
-4. Clear caches:
+APNs requires a cURL build supporting HTTP/2. Webhooks require cURL for DNS pinning.
+The admin push Test action sends fixed text only to the signed-in admin's registered
+provider/device. Server Test needs the original credential supplied temporarily;
+its caller IP must be allowed. No test changes the stored credential. Webhook Test
+queues a fixed `api.test` event for the configured receiver.
 
-```bash
-php artisan cache:clear
-php artisan config:clear
-php artisan view:clear
-```
+Actual delivery to a phone requires valid provider credentials and a registered real
+APNs/FCM destination. Isolated transport tests are not proof of phone delivery.
 
-5. Verify the module appears in **Manage > Modules** and is enabled.
+## Common API conventions
 
-## Configuration
+Base path: `/api/v2`. HTTPS is mandatory. Send `Accept: application/json` and
+`Content-Type: application/json` except multipart attachment uploads. Device calls
+send `Authorization: Bearer DEVICE_CREDENTIAL`. Never put credentials in a URL.
 
-### Creating an API Key
+Objects are returned in `data`. Conversation fields reuse the existing v1 transformer:
+`id`, `number`, `subject`, `status`, `state`, `mailboxId`, `assignee`, `customer`,
+`preview`, `cc`, `bcc`, timestamps and counts. V2 adds `tags`, `custom_fields`,
+`snoozed_until`, `starred` and `read`. Thread and customer fields also reuse the
+module's existing transformers. Treat all returned text/HTML as untrusted input.
 
-1. Go to **Manage > API & Webhooks**
-2. Enter a name for the key (e.g., "n8n Integration")
-3. Optionally enter allowed IPs (comma-separated, supports CIDR: `192.168.1.0/24`)
-4. Click **Generate Key**
-5. **Copy the API Key and Secret immediately** — the secret is only shown once
+Lists accept `page` and `per_page` where documented, with `per_page` from 1 to 100
+(default 50). Conversation/thread/customer/notification pages return `page` and `has_more`.
+Errors use ordinary HTTP status: 401 invalid credential/signature, 403 denied scope
+or IP, 404 inaccessible/missing object, 422 invalid data, 429 rate limit with
+Retry-After. Native action failures return `error: native_action_failed` and a message.
 
-### Authentication
+### Access levels
 
-Pass your API key in the `X-Api-Key` header:
+- `root`: only for an active FreeScout administrator; all native administrator access.
+- `own`: conversation assignment must match the authenticated agent, in addition to
+  native mailbox and conversation permissions. Watching alone does not satisfy Own.
+- `broad`: every conversation allowed by the agent's mailboxes and native policy.
+  AssignedOnly is still enforced; Broad never overrides it.
 
-```bash
-curl -H "X-Api-Key: YOUR_API_KEY" https://support.example.com/api/v1/conversations
-```
+Every object lookup, thread list, attachment and sync result checks the parent
+conversation's visibility. Customer lists are limited to visible conversations for
+Own/Broad; Root can see all customers. Users/saved replies are limited to permitted
+mailboxes. A device can list/revoke only credentials belonging to its own agent.
+Disabled/deleted users, revoked/expired credentials and demoted Root users are rejected.
 
-Or as a query parameter (less secure, not recommended):
+### Agent login and device credentials
 
-```bash
-curl https://support.example.com/api/v1/conversations?api_key=YOUR_API_KEY
-```
+1. `GET /login`: keep the response cookies and returned `csrf_token`.
+2. `POST /login`: same cookie jar, X-CSRF-TOKEN, email, password, name and access_level.
+3. Without a 2FA module, success returns 201 with `token`, `token_type: Bearer` and
+   `expires_at`. The raw credential is returned once with Cache-Control: no-store.
+4. When a native 2FA module is enabled, login returns 202 with `authentication:
+   native_two_factor`, the native `next` URL and `exchange_url`. Complete FreeScout's
+   own TOTP/recovery-code flow in the same cookie jar/web view, then POST name and
+   access_level to exchange_url with its current CSRF token. The exchange uses an
+   ordinary protected web path, `/mobile-api/device-token`, including FreeScout's
+   native custom middleware hooks, rather than recreating or bypassing 2FA.
+5. `POST /tokens/exchange` is a 307 gateway to that protected web exchange. Native
+   session clients can use it after a completed sign-in. Preserve POST and cookies.
 
-## API Reference
+The current installation has no 2FA module; its real TOTP/recovery UI cannot be
+exercised until one is enabled. No custom 2FA secret or recovery-code store is added.
 
-**Base URL:** `https://your-freescout.com/api/v1`
-
-All responses return JSON with this structure:
+Example request (placeholder values):
 
 ```json
-{
-  "status": "success",
-  "data": { ... }
-}
+{"email":"agent@example.com","password":"PASSWORD","name":"Agent iPhone","access_level":"own"}
 ```
 
-Error responses:
+Example success:
 
 ```json
-{
-  "status": "error",
-  "message": "Description of the error."
-}
+{"token":"ONE_TIME_DEVICE_CREDENTIAL","token_type":"Bearer","expires_at":"2026-12-16T00:00:00+00:00"}
 ```
 
----
+`GET /me` returns the agent's brief profile and credential access level.
+`GET /tokens` returns its owner's credential metadata, never raw tokens/digests.
+`DELETE /tokens/{id}` revokes one of those credentials immediately.
 
-### Conversations
+### Server authentication
 
-#### List Conversations
+Create a server credential in the admin settings, bind it to a real active agent,
+choose its access level and enter comma-separated allowed addresses/CIDRs. The raw
+64-character credential is shown once and stored only as SHA-256.
 
+Send X-Api-Key, X-Api-Timestamp (Unix seconds), X-Api-Nonce (32-128 lowercase hex
+characters) and X-Api-Signature (64 lowercase hex characters). Calculate HMAC-SHA256
+using the raw credential as key and these five UTF-8 lines joined by LF, with no final LF:
+
+```text
+UPPERCASE_HTTP_METHOD
+/actual/path?exact=query-string
+TIMESTAMP
+NONCE
+SHA256_OF_EXACT_RAW_REQUEST_BODY
 ```
-GET /api/v1/conversations
-```
 
-**Query Parameters:**
+This follows the Publish API's signing pattern while additionally binding the query
+string. Empty GET bodies use SHA-256 of the empty string. Each accepted nonce may be
+used only once for that credential. Device bearer tokens cannot be used as server
+keys and server keys cannot be used as bearer tokens. IP resolution follows FreeScout's
+trusted-proxy configuration; configure that correctly before placing a proxy in front.
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `mailbox_id` | int | Filter by mailbox |
-| `status` | string | `active`, `pending`, `closed`, `spam` |
-| `state` | string | `published`, `draft`, `deleted` |
-| `assignee` | int | Filter by assigned user ID |
-| `customer_id` | int | Filter by customer ID |
-| `search` | string | Search subject, preview, ticket number, or customer email |
-| `sort_by` | string | Sort field (default: `updated_at`) |
-| `order` | string | `asc` or `desc` (default: `desc`) |
-| `per_page` | int | Results per page, max 200 (default: 50) |
-| `page` | int | Page number |
+## Endpoint reference
 
-**Response:**
+The paths below are relative to `/api/v2`.
+
+### Mailboxes and conversations
+
+- `GET /mailboxes`: accessible mailbox ID/name/email and native folder IDs/names/counts.
+  Mine, Unassigned, Assigned, Starred, Drafts, Closed and Spam come from native folders;
+  the module adds Snoozed with `id: null` and `type: snoozed`. Counts apply token visibility.
+- `GET /conversations`: filters `mailbox_id`, `folder_id`, `status` (active/pending/closed/spam),
+  or `snoozed=1`, plus page/per_page. Use snoozed=1 with mailbox_id for the virtual folder.
+- `GET /conversations/{id}`: one visible conversation including extension metadata.
+- `POST /conversations`: native send/create. Required mailbox_id, subject, body and `to`
+  email array; optional cc, bcc and uploaded attachment IDs. Identity/initial assignment
+  is the authenticated agent. Returns 201 with native result plus conversation_id/thread_id.
+- `PATCH /conversations/{id}`: one explicit action per request, examples below.
+- `PUT /conversations/{id}/read`: `{"read":true}` or false. Updates this user's native
+  conversation notifications/read state and clears its notification cache.
+
+Creation example:
 
 ```json
-{
-  "status": "success",
-  "page": 1,
-  "pages": 3,
-  "total": 142,
-  "data": [
-    {
-      "id": 44,
-      "number": 44,
-      "type": "email",
-      "status": "active",
-      "state": "published",
-      "subject": "Refund request",
-      "preview": "Could you please refund...",
-      "mailboxId": 4,
-      "assignee": {
-        "id": 6,
-        "type": "user",
-        "firstName": "Jane",
-        "lastName": "Smith",
-        "email": "jane@example.com"
-      },
-      "customer": {
-        "id": 91,
-        "type": "customer",
-        "firstName": "Rodney",
-        "lastName": "Robertson",
-        "email": "rodney@example.org"
-      },
-      "cc": [],
-      "bcc": [],
-      "closedAt": null,
-      "lastReplyAt": "2026-03-05T14:07:23+00:00",
-      "createdAt": "2026-03-01T10:00:00+00:00",
-      "updatedAt": "2026-03-05T14:07:23+00:00",
-      "threadsCount": 5,
-      "hasAttachments": false
-    }
-  ]
-}
+{"mailbox_id":2,"subject":"Order question","body":"<p>How can we help?</p>","to":["customer@example.com"],"cc":[],"bcc":[],"attachments":[123]}
 ```
 
-#### Get Conversation (with threads)
-
-```
-GET /api/v1/conversations/:id
-```
-
-Returns full conversation object with `_embedded.threads` array.
-
-#### Create Conversation
-
-```
-POST /api/v1/conversations
-```
-
-**Body Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `mailbox_id` | int | Yes | Target mailbox ID |
-| `subject` | string | Yes | Conversation subject |
-| `customer_email` | string | Yes | Customer's email address |
-| `body` | string | Yes | First message body (HTML allowed) |
-| `assignee` | int | No | Assign to user ID |
-| `status` | string | No | `active` (default), `pending`, `closed` |
-| `type` | string | No | `email` (default), `phone`, `chat` |
-| `cc` | string | No | CC emails, comma-separated |
-| `bcc` | string | No | BCC emails, comma-separated |
-| `customer_first_name` | string | No | New customer's first name |
-| `customer_last_name` | string | No | New customer's last name |
-
-**Example:**
-
-```bash
-curl -X POST https://support.example.com/api/v1/conversations \
-  -H "X-Api-Key: YOUR_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "mailbox_id": 4,
-    "subject": "Order #12345 issue",
-    "customer_email": "customer@example.com",
-    "customer_first_name": "John",
-    "customer_last_name": "Doe",
-    "body": "<p>I have an issue with my order.</p>",
-    "assignee": 6,
-    "status": "active"
-  }'
-```
-
-#### Update Conversation
-
-```
-PUT /api/v1/conversations/:id
-```
-
-**Body Parameters:**
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `status` | string | `active`, `pending`, `closed`, `spam` |
-| `assignee` | int | Reassign to user ID |
-| `subject` | string | Update subject line |
-
-#### Delete Conversation
-
-```
-DELETE /api/v1/conversations/:id
-```
-
-Moves conversation to Deleted state (soft delete).
-
----
-
-### Threads (Replies & Notes)
-
-#### List Threads
-
-```
-GET /api/v1/conversations/:id/threads
-```
-
-Returns all threads for a conversation, newest first.
-
-#### Create Thread (Reply or Note)
-
-```
-POST /api/v1/conversations/:id/threads
-```
-
-**Body Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `body` | string | Yes | Thread body (HTML allowed) |
-| `type` | string | No | `note` (default), `message` (agent reply), `customer` |
-| `user_id` | int | No | User creating the thread |
-
-**Example — Add a note:**
-
-```bash
-curl -X POST https://support.example.com/api/v1/conversations/44/threads \
-  -H "X-Api-Key: YOUR_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "body": "Internal note: Customer called about this.",
-    "type": "note",
-    "user_id": 1
-  }'
-```
-
----
-
-### Customers
-
-#### List/Search Customers
-
-```
-GET /api/v1/customers
-```
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `search` | string | Search by name, company, or email |
-| `per_page` | int | Results per page (default: 50, max: 200) |
-
-#### Get Customer
-
-```
-GET /api/v1/customers/:id
-```
-
-Returns full customer object with emails, phones, websites, social profiles, and address.
-
----
-
-### Users (Agents)
-
-#### List Users
-
-```
-GET /api/v1/users
-```
-
-Returns all non-deleted users with full profile data:
+Example create/reply result:
 
 ```json
-{
-  "status": "success",
-  "data": [
-    {
-      "id": 1,
-      "firstName": "Jane",
-      "lastName": "Smith",
-      "email": "jane@example.com",
-      "role": "admin",
-      "status": "active",
-      "inviteState": "activated",
-      "type": "user",
-      "jobTitle": "Support Lead",
-      "phone": "+1-555-0100",
-      "timezone": "America/New_York",
-      "locale": "en",
-      "photoUrl": "https://...",
-      "permissions": [],
-      "mailboxIds": [1, 2, 4],
-      "lastLoginAt": "2026-03-07T14:30:00+00:00",
-      "telegramEnabled": false,
-      "createdAt": "2025-01-15T10:00:00+00:00",
-      "updatedAt": "2026-03-07T14:30:00+00:00"
-    }
-  ]
-}
+{"data":{"status":"success","msg":"","conversation_id":405,"thread_id":2264}}
 ```
 
-**Fields:** `lastLoginAt` requires the login tracking migration included in this module. `telegramEnabled` is populated if the Telegram notifications module is installed. `mailboxIds` lists mailboxes the user has access to.
-
-#### Get User
-
-```
-GET /api/v1/users/:id
-```
-
-#### Create User
-
-```
-POST /api/v1/users
-```
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `email` | string | Yes | Unique email address |
-| `first_name` | string | Yes | First name (max 20 chars) |
-| `last_name` | string | Yes | Last name (max 30 chars) |
-| `password` | string | No | Password (min 8 chars, auto-generated if omitted) |
-| `role` | string | No | `user` (default) or `admin` |
-| `mailbox_ids` | string/array | No | Comma-separated mailbox IDs to grant access |
-
-#### Disable User
-
-```
-POST /api/v1/users/:id/disable
-```
-
-Disables a non-admin user. Admin users cannot be disabled via API.
-
-#### Enable User
-
-```
-POST /api/v1/users/:id/enable
-```
-
-Re-enables a disabled user.
-
----
-
-### Mailboxes
-
-#### List Mailboxes
-
-```
-GET /api/v1/mailboxes
-```
-
-#### Get Mailbox (with SMTP/IMAP config)
-
-```
-GET /api/v1/mailboxes/:id?include_config=1
-```
-
-When `include_config=1` is passed, the response includes SMTP and IMAP server settings (passwords excluded).
-
-**Response with config:**
+Mutation examples (one request each):
 
 ```json
-{
-  "status": "success",
-  "data": {
-    "id": 4,
-    "name": "Support",
-    "email": "support@example.com",
-    "smtp": {
-      "server": "smtp.example.com",
-      "port": 587,
-      "username": "user@example.com",
-      "encryption": "tls"
-    },
-    "imap": {
-      "server": "imap.example.com",
-      "port": 993,
-      "username": "user@example.com",
-      "protocol": "imap",
-      "encryption": "ssl",
-      "validateCert": true
-    }
-  }
-}
+{"action":"status","status":"closed"}
+{"action":"assignee","user_id":7}
+{"action":"assignee","user_id":-1}
+{"action":"move","mailbox_id":3}
+{"action":"star","starred":true}
+{"action":"merge","merge_id":406}
+{"action":"metadata","tags":["billing","urgent"],"custom_fields":{"order_number":"A123"}}
+{"action":"metadata","snoozed_until":"2026-12-01T15:00:00Z"}
+{"action":"metadata","snoozed_until":null}
 ```
 
----
+Assignment validates the target agent's mailbox access. Moving checks the destination
+mailbox. Merge checks update access to both conversations and refuses self-merge.
+Metadata writes replace the supplied tags/custom_fields map, preserve omitted fields
+and touch the native conversation timestamp so sync observes them. Custom-field values
+are bounded strings, numbers, booleans or null; nested values are refused.
 
-### Email History
+### Threads, replies, notes and drafts
 
-#### Get Email History
+- `GET /conversations/{id}/threads`: published threads, page/per_page, ascending thread ID.
+- `POST /conversations/{id}/reply`: required body; optional to/cc/bcc email arrays and
+  attachment IDs. Uses the native send path and configured email queue. A 200 response
+  means FreeScout accepted the operation, not that the recipient opened the message.
+- `POST /conversations/{id}/notes`: required body; optional `mentions` agent-ID array.
+  Mentioned agents must be active and able to view the conversation.
+- `GET /conversations/{id}/drafts`: only the authenticated agent's drafts.
+- `POST /conversations/{id}/drafts`: required body; optional to/cc/bcc and attachments.
+  Returns the native draft conversation_id/thread_id.
+- `DELETE /conversations/{id}/drafts/{draftId}`: native discard, only the agent's own draft.
 
-```
-GET /api/v1/emails
-```
-
-Returns all inbound and outbound email threads across mailboxes.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `mailbox_id` | int | Filter by mailbox |
-| `conversation_id` | int | Filter by conversation |
-| `direction` | string | `in` (customer messages) or `out` (agent replies) |
-| `since` | datetime | Only emails after this date (ISO 8601) |
-| `per_page` | int | Results per page (default: 50, max: 200) |
-
-**Example:**
-
-```bash
-# Get all outbound emails from mailbox 4 since March 1
-curl -H "X-Api-Key: YOUR_KEY" \
-  "https://support.example.com/api/v1/emails?mailbox_id=4&direction=out&since=2026-03-01"
-```
-
----
-
-### SMTP/IMAP Testing
-
-#### Test SMTP Connection
-
-```
-POST /api/v1/mailboxes/:id/test-smtp
-```
-
-Tests the SMTP connection for the specified mailbox. Returns success or error with details.
-
-#### Test IMAP Connection
-
-```
-POST /api/v1/mailboxes/:id/test-imap
-```
-
-Tests the IMAP connection and returns mailbox stats:
+Reply example:
 
 ```json
-{
-  "status": "success",
-  "message": "IMAP connection successful.",
-  "data": {
-    "messages": 152,
-    "recent": 0,
-    "unread": 3
-  }
-}
+{"body":"<p>Your order has shipped.</p>","to":["customer@example.com"],"cc":["team@example.com"],"bcc":[],"attachments":[123]}
 ```
 
-#### Send Test Email
+Note example:
 
-```
-POST /api/v1/mailboxes/:id/send-test
-```
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `to` | string | Yes | Recipient email address |
-| `subject` | string | No | Email subject (default: "FreeScout API Test Email") |
-| `body` | string | No | Email body text |
-
----
-
-## Security
-
-### API Key Authentication
-Every request must include a valid API key. Keys are 48-character hex strings generated with `random_bytes()`.
-
-### IP Whitelisting
-Each API key can have an IP whitelist. Supports:
-- Single IPs: `192.168.1.100`
-- CIDR ranges: `10.0.0.0/8`
-- Multiple: `192.168.1.1, 10.0.0.0/24`
-- Empty = allow all IPs
-
-### Rate Limiting
-60 requests per minute per API key. Returns `429 Too Many Requests` when exceeded.
-
-### Request Logging
-Every API call is logged with:
-- Timestamp
-- API key used
-- HTTP method and endpoint
-- Client IP address
-- Response status code
-- Response time (ms)
-- Request body (passwords/secrets stripped)
-
-Logs are viewable at **Manage > API & Webhooks** in the admin panel.
-
-### Input Validation
-- All inputs validated via Laravel's validation rules
-- SQL injection prevented via Eloquent ORM parameterized queries
-- XSS prevented via `e()` output escaping
-- API key format enforced via regex (`/^[a-f0-9]{48}$/`)
-
-### What is NOT exposed
-- User passwords
-- API secrets (shown only once at creation)
-- Mailbox SMTP/IMAP passwords (never returned in API responses)
-- Internal file paths
-
----
-
-## HTTP Status Codes
-
-| Code | Description |
-|------|-------------|
-| 200 | Success |
-| 201 | Created (new resource) |
-| 401 | Missing or invalid API key |
-| 403 | IP not whitelisted / insufficient permissions |
-| 404 | Resource not found |
-| 422 | Validation error |
-| 429 | Rate limit exceeded |
-| 500 | Server error |
-
----
-
-## Admin Interface
-
-Navigate to **Manage > API & Webhooks** to:
-
-- Create and manage API keys
-- Set IP whitelists per key
-- Enable/disable keys without deleting them
-- View real-time API request logs
-- See endpoint reference documentation
-
----
-
-## Module Structure
-
-```
-Modules/ApiWebhooks/
-├── module.json                          # Module metadata
-├── README.md                            # This file
-├── Database/
-│   └── Migrations/
-│       ├── 2026_03_06_000001_create_api_keys_table.php
-│       ├── 2026_03_06_200000_add_detail_columns_to_api_logs.php
-│       └── 2026_03_07_000001_add_last_login_at_to_users_table.php
-├── Http/
-│   ├── Controllers/
-│   │   ├── ApiController.php            # All API endpoints
-│   │   └── ApiKeysController.php        # Admin key management
-│   ├── Middleware/
-│   │   └── ApiAuth.php                  # Auth, IP check, rate limit, logging
-│   └── routes.php                       # Route definitions
-├── Models/
-│   ├── ApiKey.php                       # API key model with IP validation
-│   └── ApiLog.php                       # Request log model
-├── Providers/
-│   └── ApiWebhooksServiceProvider.php   # Module bootstrap
-├── Resources/
-│   └── views/
-│       └── settings.blade.php           # Admin settings page
-├── Transformers/
-│   ├── ConversationTransformer.php      # Conversation JSON formatter
-│   ├── ThreadTransformer.php            # Thread JSON formatter
-│   ├── CustomerTransformer.php          # Customer JSON formatter
-│   ├── UserTransformer.php              # User JSON formatter
-│   └── MailboxTransformer.php           # Mailbox JSON formatter
-└── Public/                              # Static assets (empty)
+```json
+{"body":"Please review the invoice.","mentions":[7]}
 ```
 
----
+### Attachments
 
-## Differences from Paid Module
+- `POST /attachments`: multipart field `file`, using FreeScout's normal upload handling
+  and private storage. Returns 201; `data.id` is used in reply/create/draft attachments.
+- `GET /attachments/{id}`: authenticated download with Content-Disposition and nosniff.
+  Published attachments require parent-conversation access. Draft attachments additionally
+  require their creator; unattached uploads are available only to their uploading agent.
 
-| Feature | Paid Module | This Module |
-|---------|-------------|-------------|
-| Price | $12.99 | Free / Open Source |
-| API Key Auth | Yes | Yes |
-| IP Whitelisting | No | Yes |
-| Rate Limiting | No | Yes (60/min) |
-| Request Logging | No | Yes (full audit trail) |
-| CIDR Support | No | Yes |
-| Webhooks | Yes | Planned |
-| CORS Config | Yes | Planned |
-| SMTP/IMAP Testing | No | Yes |
-| Test Email Sending | No | Yes |
+### Customers, users and saved replies
 
----
+- `GET /customers`: scoped customer list, page/per_page.
+- `GET /customers/{id}`: one scoped profile, using the existing customer transformer.
+- `POST /customers`: required first_name/email; optional last_name. Native create rules
+  apply. Returns 201 with the resulting customer profile.
+- `PATCH /customers/{id}`: required first_name; optional last_name, company, job_title,
+  background. Uses native setData/sanitization and the customer.updated hook. Existing
+  email/channel associations are preserved; moving emails between customers is not exposed.
+- `GET /users`: native list of agents visible through the caller's mailboxes, brief fields.
+- `GET /saved-replies`: shared/per-agent replies in permitted mailboxes; optional mailbox_id.
+  Administrators add/remove these module-owned replies in the settings page.
 
-## License
+Customer examples:
 
-AGPL-3.0 — Same as FreeScout.
+```json
+{"first_name":"Alex","last_name":"Customer","email":"alex@example.com"}
+{"first_name":"Alex","company":"Example Ltd","background":"Prefers email."}
+```
 
-## Author
+### Notifications and push devices
 
-**Michael Peres** — [GitHub](https://github.com/mikeyperes)
+- `GET /notifications`: this agent's native notifications whose conversation remains
+  visible, with page/per_page. Returns IDs, conversation_id, read_at and created_at without exposing hidden tickets.
+- `GET /notification-settings`: native medium/event rows for the agent.
+- `PUT /notification-settings`: replace the complete map of medium IDs to event-ID arrays.
+  An empty map disables all notifications. Medium 1 is email, 2 browser and 3 mobile.
+  Native event IDs are retained; module event 1001 enables API-note mentions on mobile.
+- `PUT /device`: required provider (apns or fcm) and push_token. Registration belongs to
+  the current device credential. Provider destinations are encrypted and never returned.
+- `DELETE /device`: remove the current credential's push registration.
 
-## Contributing
+Examples:
 
-Pull requests welcome. Please ensure:
-- No security vulnerabilities (OWASP Top 10)
-- All inputs validated
-- All API calls logged
-- No hardcoded credentials, tokens, or sensitive data
+```json
+{"subscriptions":{"1":[2,13,3,5],"2":[2,13,3,5],"3":[1,2,3,1001]}}
+{"provider":"apns","push_token":"APNS_DEVICE_TOKEN"}
+```
 
+Native subscription dispatch selects recipients for new conversations, customer replies,
+assignment and other supported native events. API notes with explicit mentions additionally
+use event 1001. Delivery rechecks current active user/token, conversation access, Own
+assignment and the saved preferences before sending. Changes to notification preferences
+invalidate previously queued push notifications. Payloads contain event/conversation IDs
+and a generic alert, not ticket bodies. Revoked/expired device credentials cannot receive push.
 
-## Security update 1.1.0
+### Changed-since synchronization
 
-All `/manage/api-webhooks/*` actions require an administrator session. API keys are
-shown once at creation, stored as SHA-256, and excluded from JSON serialization.
-Existing callers keep sending the same `X-Api-Key`; migration does not rotate keys.
-The legacy API secret is unused by v1 authentication and is now hashed as well.
+`GET /sync?since=ISO8601&per_page=50`, then use each returned next_cursor until null.
+The encrypted cursor binds its token, time window and last (updated_at,id) pair and expires
+in one hour. `next_since` is the checkpoint for the next completed synchronization.
+The inclusive checkpoint deliberately overlaps second-resolution timestamps; deduplicate
+by conversation ID and updatedAt. Soft-deleted conversations retain their native state.
 
-### Scopes
+```json
+{"data":[],"next_cursor":null,"next_since":"2026-11-16T23:00:00+00:00","requires_visibility_refresh":true}
+```
 
-GET routes require `read`. Conversation creation/update require `conversations:write`,
-delete requires `conversations:delete`, thread creation requires `threads:write`,
-user creation/enable/disable require `users:write`, SMTP/IMAP tests require
-`mailboxes:test`. Creating an admin additionally requires `admin`; sending the fixed
-test message requires `admin`. Thread identity defaults to the key's creating agent;
-a different `user_id` requires `agents:impersonate`.
+Permission/assignment changes can remove a conversation from visibility without producing
+an accessible tombstone. Clients must periodically reconcile their cached IDs against the
+scoped conversation list, and always purge cached content on 403/404. The flag above makes
+that requirement explicit; this endpoint does not promise a historical event replay feed.
 
-New keys default to read only. Existing keys migrate with all explicit legacy scopes
-for caller compatibility; administrators can reduce them in the settings page.
-Key 2 was not rotated and its allowlist was not changed by this release.
+## Outgoing webhooks
 
-### Logging and retention
+Administrators configure an HTTPS receiver and copy its signing secret once. Secrets
+are encrypted at rest. Events cover native new conversations, customer/agent replies,
+notes, assignment and status changes. Payloads contain event name and conversation ID.
 
-Logs contain request metadata and HTTP status only. Bodies, headers, query strings,
-response content and user agents are not stored. Historical sensitive fields are erased
-by migration. No IP geolocation service is called. FreeScout's daily scheduler deletes
-logs older than the `apiwebhooks_log_retention_days` option (default 30 days).
-The normal FreeScout scheduler must be running. The retention option currently has
-no dedicated settings control. Log clearing in the legacy page still deletes records.
+Headers: X-FreeScout-Event (stable UUID), X-FreeScout-Timestamp (Unix seconds) and
+X-FreeScout-Signature. Verify the lowercase HMAC-SHA256 of:
 
-### Tests
+```text
+TIMESTAMP.EVENT_UUID.EXACT_RAW_JSON_BODY
+```
 
-Run `php Modules/ApiWebhooks/Tests/security.php` as the FreeScout account. It creates
-and removes one temporary scoped credential, makes real HTTP requests to `app.url`,
-and checks authorization and metadata-only logging. It never prints credentials.
+Use the configured signing secret, compare in constant time, reject stale timestamps
+and deduplicate event UUIDs. Deliveries are at least once. Each event has up to five
+attempts with exponential retry delays; status/attempts are visible in the admin log.
+URLs must use HTTPS port 443, no userinfo/fragments, and public addresses only. DNS is
+revalidated and pinned on every attempt; redirects are disabled. Response bodies are not logged.
 
-### Mobile API status
+The signed `/api/v2/webhook-diagnostic/{challenge}` endpoint supports short-lived self-tests
+only. It accepts no ticket-system business action. Without an existing encrypted diagnostic
+challenge it returns 404; it validates timestamp/signature and consumes the challenge once.
 
-This release hardens the existing v1 API. `/api/v2` mobile endpoints, device tokens,
-HMAC server credentials, push and outgoing webhooks are not implemented in 1.1.0.
+## Logs and retention
+
+Legacy request bodies, request headers, query strings and response content are erased by
+the security migration. New legacy logs contain status metadata only; no IP geolocation
+service is called. The v2 request journal stores method/route-template/IP/status/token ID/time with
+an HMAC hash chain serialized on one state row. Retention advances a stored anchor before
+removing an old prefix; the remaining chain can still be verified from that anchor.
+Credentials, ticket bodies, provider responses, cookies and signatures are not stored in
+request logs. Completed/exhausted delivery records follow the same retention setting.
+
+## Legacy v1 security
+
+All `/manage/api-webhooks/*` management actions require an admin. New v1 credentials are
+shown once and stored as SHA-256. Existing callers send their unchanged X-Api-Key.
+New keys default to `read`; existing keys migrated to explicit legacy permissions for
+compatibility. Key 2's permissions/allowlist are not changed by the v2 release.
+
+GET v1 routes require `read`. Conversation create/update require `conversations:write`,
+delete requires `conversations:delete`, thread creation `threads:write`, user actions
+`users:write`, SMTP/IMAP diagnostics `mailboxes:test`. Admin creation additionally requires
+`admin`; fixed-content test email requires `admin`. A thread defaults to the key's creating
+agent. Choosing another user_id requires `agents:impersonate`.
+
+The legacy v1 routes remain conversations list/get/create/update/delete, threads list/create,
+customers list/get, users list/get/create/disable/enable, mailboxes list/get, email history,
+SMTP/IMAP tests and fixed-content send-test. V1 is a compatibility server API, not the mobile
+agent boundary; use v2 for agent visibility and normal native reply/send behavior.
+
+## Tests
+
+See [TEST-RESULTS.md](TEST-RESULTS.md) for the recorded production verification and limits.
+
+The production install does not include a PHPUnit executable. The module therefore supplies
+standalone PHP regression runners bootstrapping the actual application. The isolated SQLite
+migration fixture uses installed PHP 8.1 because the legacy SQLite grammar emits PHP 8.4
+deprecations; the live HTTP application tests use the current runtime. Run as its site user:
+
+```text
+/opt/cpanel/ea-php81/root/usr/bin/php Modules/ApiWebhooks/Tests/migration.php
+php Modules/ApiWebhooks/Tests/security.php
+php Modules/ApiWebhooks/Tests/login.php
+php Modules/ApiWebhooks/Tests/mobile.php
+php Modules/ApiWebhooks/Tests/boundaries.php ACTIVE_TEST_ADMIN_ID
+php Modules/ApiWebhooks/Tests/live-endpoints.php ACTIVE_TEST_ADMIN_ID
+php Modules/ApiWebhooks/Tests/outbound.php
+php Modules/ApiWebhooks/Tests/settings.php ACTIVE_TEST_ADMIN_ID
+php Modules/ApiWebhooks/Tests/events.php ACTIVE_TEST_ADMIN_ID
+```
+
+Tests never print credentials. They create and remove temporary API credentials, validate
+real HTTPS routes, policy boundaries, HMAC/replay/time/IP/rate controls and the audit chain.
+The workflow runner performs real native sends to the explicitly selected administrator's
+email, creates labeled regression conversations and closes successful fixtures. It must not
+be run with a real customer's address. Outbound tests deliver a real signed HTTPS self-test
+and use isolated generated signing keys/mock responses for APNs/FCM protocol checks; they
+never replace production provider credentials. Phone delivery still needs real credentials
+and a real registered device. The 2FA module is not installed, so real TOTP/recovery UI testing
+is conditional on enabling that native module.
+
+## Tables
+
+Legacy: api_keys, api_logs. Mobile: api_device_tokens, api_nonces, api_audit_chain,
+api_audit_entries, api_push_devices, api_webhook_subscriptions, api_deliveries,
+api_conversation_metadata, api_saved_replies. FreeScout's own users, mailboxes,
+conversations, threads, customers, attachments, subscriptions and notifications remain
+the authoritative native records.

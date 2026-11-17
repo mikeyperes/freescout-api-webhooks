@@ -3,6 +3,7 @@
 @section('title_full', 'API & Webhooks - ' . config('app.name'))
 
 @section('content')
+<p><a href="{{ route('apiwebhooks.mobile') }}">Mobile API settings, server credentials and webhooks</a></p>
 <div class="container">
     <div class="row">
         <div class="col-md-12">
@@ -15,8 +16,8 @@
             @if(session('new_api_key'))
                 <div class="alert alert-warning">
                     <strong>Save these credentials now - the secret will not be shown again!</strong><br>
-                    <code>API Key: {{ session('new_api_key') }}</code><br>
-                    <code>API Secret: {{ session('new_api_secret') }}</code>
+                    <code>API Key: {{ decrypt(session('new_api_key')) }}</code><br>
+                    <code>API Secret: {{ decrypt(session('new_api_secret')) }}</code>
                 </div>
             @endif
 

@@ -33,7 +33,7 @@ class ApiLog extends Model
         self::create([
             'api_key_id'       => $apiKeyId,
             'method'           => $request->method(),
-            'endpoint'         => $request->path(),
+            'endpoint'         => $request->route() ? $request->route()->uri() : 'unmatched',
             'ip'               => $request->ip(),
             'user_agent'       => null,
             'request_headers'  => null,

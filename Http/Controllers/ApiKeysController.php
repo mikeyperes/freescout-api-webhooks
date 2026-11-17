@@ -66,7 +66,8 @@ class ApiKeysController extends Controller
                 ];
             });
 
-        return view('apiwebhooks::settings', compact('keys', 'logs', 'blockedIps'));
+        return response()->view('apiwebhooks::settings', compact('keys', 'logs', 'blockedIps'))
+            ->header('Cache-Control', 'no-store, private');
     }
 
     /**
@@ -96,8 +97,8 @@ class ApiKeysController extends Controller
         ]);
 
         \Session::flash('flash_success', __('API key created.'));
-        \Session::flash('new_api_key', $plainKey);
-        \Session::flash('new_api_secret', $plainSecret);
+        \Session::flash('new_api_key', encrypt($plainKey));
+        \Session::flash('new_api_secret', encrypt($plainSecret));
 
         return redirect()->route('apiwebhooks.settings');
     }

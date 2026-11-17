@@ -1,24 +1,11 @@
 <?php
 
 // Run as the FreeScout account: php Modules/ApiWebhooks/Tests/security.php
-require dirname(__DIR__, 3).'/vendor/autoload.php';
-$app = require dirname(__DIR__, 3).'/bootstrap/app.php';
-$app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+require __DIR__.'/bootstrap.php';
 
 use Modules\ApiWebhooks\Models\ApiKey;
 use Modules\ApiWebhooks\Models\ApiLog;
 use Modules\ApiWebhooks\Http\Middleware\ApiAuth;
-
-$checks = 0;
-function check($condition, $message)
-{
-    global $checks;
-    if (!$condition) {
-        throw new RuntimeException($message);
-    }
-    ++$checks;
-    echo 'PASS '.$message.PHP_EOL;
-}
 
 $key = null;
 try {
@@ -70,6 +57,14 @@ try {
         'password' => bin2hex(random_bytes(16)), 'role' => 'admin',
     ]]);
     check($response->getStatusCode() === 403, 'live HTTP cannot create admin without admin scope');
+    $conversation = App\Conversation::first();
+    if ($conversation) {
+        $key->scopes = ['threads:write'];
+        $key->save();
+        $response = $client->post('api/v1/conversations/'.$conversation->id.'/threads', ['headers' => $headers,
+            'json' => ['body' => 'Denied identity regression.', 'type' => 'note', 'user_id' => $key->created_by_user_id + 1]]);
+        check($response->getStatusCode() === 403, 'v1 thread impersonation requires its explicit scope');
+    }
     $request = Illuminate\Http\Request::create('/api/v1/users?password=secret', 'POST', ['nested' => ['password' => 'secret'], 'body' => 'private']);
     ApiLog::log($key->id, $request, 200, 'private response');
     $log = ApiLog::where('api_key_id', $key->id)->orderBy('id', 'desc')->first();
