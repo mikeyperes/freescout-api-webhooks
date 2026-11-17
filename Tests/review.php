@@ -79,14 +79,17 @@ try {
     check(count($page['data']) === 5 && $policyChecks === 5, 'deep page authorizes only its five returned rows');
     check(collect($queries)->contains(function ($query) { return strpos($query['query'], 'limit 6 offset 60') !== false; }), 'deep pagination is bounded in SQL');
     check($page['data'][0]['id'] === $ids[9], 'inbox defaults to newest activity first');
+    foreach (array_slice($ids, 0, 25) as $id) {
+        $customer = App\Customer::create('ticketapi-2-batch-'.bin2hex(random_bytes(8)).'@example.invalid', ['first_name' => 'Batch fixture']);
+        App\Conversation::where('id', $id)->update(['customer_id' => $customer->id]);
+    }
     $rows = App\Conversation::whereIn('id', $ids)->orderBy('id')->limit(25)->get();
-    ConversationPresenter::page($rows, $actor);
     DB::flushQueryLog();
     ConversationPresenter::page($rows->take(1), $actor);
     $singleQueries = count(DB::getQueryLog());
     DB::flushQueryLog();
     ConversationPresenter::page($rows, $actor);
-    check(count(DB::getQueryLog()) <= $singleQueries + 1, 'presentation query count stays constant for 25 rows');
+    check(count(DB::getQueryLog()) <= $singleQueries + 1, 'presentation query count stays constant for 25 distinct cold customers');
     $folder = $base->mailbox->getAssesibleFolders()->first();
     DB::flushQueryLog();
     $access->folderQuery($request, $folder)->count();

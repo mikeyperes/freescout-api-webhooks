@@ -2,7 +2,7 @@
     "name": "ApiWebhooks",
     "alias": "fsapiwebhooks",
     "description": "Secure agent mobile and server APIs, native ticket actions, push delivery and signed outgoing webhooks.",
-    "version": "2.0.1",
+    "version": "2.0.2",
     "active": 1,
     "detached": true,
     "author": "Michael Peres",

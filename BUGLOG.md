@@ -45,3 +45,7 @@ The explicit-mention regression also found that native subscriptions.event is an
 unsigned tiny integer. The original module event 1001 was outside its range. The
 module declares event 250, verifies its persistence and normalizes preference-hash
 integers across database drivers. No core schema or existing user selection is changed.
+
+The batch guard also covers 25 distinct cold customers. The native getMainEmail()
+helper uses a per-customer query cache; eager-loaded native email relations are used
+by the transformer on batched pages, preserving its native fallback for other callers.

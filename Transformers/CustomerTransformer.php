@@ -48,7 +48,8 @@ class CustomerTransformer
             'type'      => 'customer',
             'firstName' => $customer->first_name,
             'lastName'  => $customer->last_name,
-            'email'     => $customer->getMainEmail(),
+            'email'     => $customer->relationLoaded('emails')
+                ? (string) optional($customer->emails->first())->email : $customer->getMainEmail(),
         ];
     }
 }

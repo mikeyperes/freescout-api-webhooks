@@ -1,6 +1,6 @@
 # Production verification
 
-Version 2.0.1 review repairs recorded 2026-11-16 20:34:49 EST on the live
+Version 2.0.2 review repairs recorded 2026-11-16 20:43:21 EST on the live
 FreeScout 1.8.241 installation.
 
 | Runner | Passed checks |
@@ -23,8 +23,9 @@ used fresh generated signing keys and isolated APNs/FCM responses.
 
 The review runner proves that a deep page fetches six SQL rows to return five,
 checks policy only for those five, orders by newest activity, aggregates folder
-counts in SQL and uses a customer SQL subquery. Presenting 25 conversations takes
-a constant number of queries compared with one conversation. Read/star actions
+counts in SQL and uses a customer SQL subquery. Presenting 25 conversations with
+distinct cold customers takes a constant number of queries compared with one
+conversation. Read/star actions
 leave the native updated_at unchanged; the initiating user's sync sees its own
 change while another agent's timestamp remains unchanged.
 

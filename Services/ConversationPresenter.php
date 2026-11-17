@@ -21,7 +21,7 @@ class ConversationPresenter
         if ($conversations->isEmpty()) {
             return [];
         }
-        $conversations->load(['mailbox', 'user', 'customer', 'created_by_user', 'followers']);
+        $conversations->load(['mailbox', 'user', 'customer.emails', 'created_by_user', 'followers']);
         $ids = $conversations->pluck('id')->all();
         $metadata = TicketMetadata::whereIn('conversation_id', $ids)->get()->keyBy('conversation_id');
         $unread = $user->unreadNotifications()->whereIn('conversation_id', $ids)->pluck('conversation_id')->all();

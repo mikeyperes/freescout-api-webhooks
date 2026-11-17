@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.2, 2026-11-16
+
+- Batch-load native customer email relations so cold inbox pages avoid per-customer queries.
+- Verify constant query counts using 25 distinct customers without warming their caches.
+
 ## 2.0.1, 2026-11-16
 
 - Apply shared SQL scoping, bounded pages/counts, activity sorting and batch presentation.

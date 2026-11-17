@@ -1,6 +1,6 @@
 # FreeScout Agent API and Webhooks
 
-FreeScout 1.8.241 / Laravel 5.5 module. Version 2.0.1.
+FreeScout 1.8.241 / Laravel 5.5 module. Version 2.0.2.
 
 ## Features
 
