@@ -1,6 +1,6 @@
 # FreeScout Agent API and Webhooks
 
-FreeScout 1.8.241 / Laravel 5.5 module. Version 2.0.0.
+FreeScout 1.8.241 / Laravel 5.5 module. Version 2.0.1.
 
 ## Features
 
@@ -62,6 +62,12 @@ Settings are native FreeScout Options:
 - `apiwebhooks_fcm_credentials`: encrypted Google service-account JSON with
   `client_email`, `private_key` and `project_id`. Enable FCM HTTP v1 for that project.
 
+APNs provider JWTs are cached for 50 minutes of their one-hour lifetime; FCM OAuth
+credentials are cached until one minute before provider expiry. Cached credentials are
+encrypted. Refreshes use connection-owned MySQL locks because Laravel 5.5 file-cache
+add() is not atomic. Retry, batch, deadline, signature-window, nonce-retention and push
+text defaults are named constants in ApiSettings.
+
 APNs requires a cURL build supporting HTTP/2. Webhooks require cURL for DNS pinning.
 The admin push Test action sends fixed text only to the signed-in admin's registered
 provider/device. Server Test needs the original credential supplied temporarily;
@@ -109,17 +115,19 @@ Disabled/deleted users, revoked/expired credentials and demoted Root users are r
 2. `POST /login`: same cookie jar, X-CSRF-TOKEN, email, password, name and access_level.
 3. Without a 2FA module, success returns 201 with `token`, `token_type: Bearer` and
    `expires_at`. The raw credential is returned once with Cache-Control: no-store.
-4. When a native 2FA module is enabled, login returns 202 with `authentication:
-   native_two_factor`, the native `next` URL and `exchange_url`. Complete FreeScout's
-   own TOTP/recovery-code flow in the same cookie jar/web view, then POST name and
-   access_level to exchange_url with its current CSRF token. The exchange uses an
-   ordinary protected web path, `/mobile-api/device-token`, including FreeScout's
-   native custom middleware hooks, rather than recreating or bypassing 2FA.
-5. `POST /tokens/exchange` is a 307 gateway to that protected web exchange. Native
-   session clients can use it after a completed sign-in. Preserve POST and cookies.
+4. The declared `apiwebhooks.device_login_ready` filter receives `(true, request, user)`.
+   An additional-authentication owner returns false until its own challenge is complete;
+   login then returns 202 with `additional_authentication_required`, the native next URL
+   and exchange_url. Token issuance checks the same filter. No module-name guessing occurs.
+5. `POST /tokens/exchange` is a 307 gateway to the ordinary protected web path
+   `/mobile-api/device-token`. Preserve POST, cookies and CSRF state while completing
+   any additional authentication. The native web middleware remains active on that path.
+6. Successful issuance logs out the FreeScout web session, invalidates its session ID
+   and regenerates CSRF state. Subsequent API requests use the returned device credential.
 
-The current installation has no 2FA module; its real TOTP/recovery UI cannot be
-exercised until one is enabled. No custom 2FA secret or recovery-code store is added.
+The current installation has no 2FA module. A future additional-authentication module
+must explicitly integrate the declared readiness hook before enabling mobile issuance;
+real TOTP/recovery UI testing remains conditional on that installation and integration.
 
 Example request (placeholder values):
 
@@ -171,7 +179,10 @@ The paths below are relative to `/api/v2`.
   Mine, Unassigned, Assigned, Starred, Drafts, Closed and Spam come from native folders;
   the module adds Snoozed with `id: null` and `type: snoozed`. Counts apply token visibility.
 - `GET /conversations`: filters `mailbox_id`, `folder_id`, `status` (active/pending/closed/spam),
-  or `snoozed=1`, plus page/per_page. Use snoozed=1 with mailbox_id for the virtual folder.
+  or `snoozed=1`, plus page/per_page. Default sorting is newest activity first
+  (last_reply_at, falling back to updated_at). Allowed sort values are activity,
+  last_reply_at, updated_at and created_at; direction is asc or desc (default desc).
+  Use snoozed=1 with mailbox_id for the virtual folder.
 - `GET /conversations/{id}`: one visible conversation including extension metadata.
 - `POST /conversations`: native send/create. Required mailbox_id, subject, body and `to`
   email array; optional cc, bcc and uploaded attachment IDs. Identity/initial assignment
@@ -272,7 +283,7 @@ Customer examples:
 - `GET /notification-settings`: native medium/event rows for the agent.
 - `PUT /notification-settings`: replace the complete map of medium IDs to event-ID arrays.
   An empty map disables all notifications. Medium 1 is email, 2 browser and 3 mobile.
-  Native event IDs are retained; module event 1001 enables API-note mentions on mobile.
+  Native event IDs are retained; module event 250 enables API-note mentions on mobile.
 - `PUT /device`: required provider (apns or fcm) and push_token. Registration belongs to
   the current device credential. Provider destinations are encrypted and never returned.
 - `DELETE /device`: remove the current credential's push registration.
@@ -280,13 +291,13 @@ Customer examples:
 Examples:
 
 ```json
-{"subscriptions":{"1":[2,13,3,5],"2":[2,13,3,5],"3":[1,2,3,1001]}}
+{"subscriptions":{"1":[2,13,3,5],"2":[2,13,3,5],"3":[1,2,3,250]}}
 {"provider":"apns","push_token":"APNS_DEVICE_TOKEN"}
 ```
 
 Native subscription dispatch selects recipients for new conversations, customer replies,
 assignment and other supported native events. API notes with explicit mentions additionally
-use event 1001. Delivery rechecks current active user/token, conversation access, Own
+use event 250. Delivery rechecks current active user/token, conversation access, Own
 assignment and the saved preferences before sending. Changes to notification preferences
 invalidate previously queued push notifications. Payloads contain event/conversation IDs
 and a generic alert, not ticket bodies. Revoked/expired device credentials cannot receive push.
@@ -294,10 +305,12 @@ and a generic alert, not ticket bodies. Revoked/expired device credentials canno
 ### Changed-since synchronization
 
 `GET /sync?since=ISO8601&per_page=50`, then use each returned next_cursor until null.
-The encrypted cursor binds its token, time window and last (updated_at,id) pair and expires
+The encrypted cursor binds its token, time window and last (syncUpdatedAt,id) pair and expires
 in one hour. `next_since` is the checkpoint for the next completed synchronization.
 The inclusive checkpoint deliberately overlaps second-resolution timestamps; deduplicate
-by conversation ID and updatedAt. Soft-deleted conversations retain their native state.
+by conversation ID and syncUpdatedAt. Per-user read/star changes have their own
+indexed user/conversation timestamp; they never touch the shared conversation updatedAt.
+Soft-deleted conversations retain their native state.
 
 ```json
 {"data":[],"next_cursor":null,"next_since":"2026-11-16T23:00:00+00:00","requires_visibility_refresh":true}
@@ -378,13 +391,16 @@ php Modules/ApiWebhooks/Tests/live-endpoints.php ACTIVE_TEST_ADMIN_ID
 php Modules/ApiWebhooks/Tests/outbound.php
 php Modules/ApiWebhooks/Tests/settings.php ACTIVE_TEST_ADMIN_ID
 php Modules/ApiWebhooks/Tests/events.php ACTIVE_TEST_ADMIN_ID
+php Modules/ApiWebhooks/Tests/review.php ACTIVE_TEST_ADMIN_ID
 ```
 
 Tests never print credentials. They create and remove temporary API credentials, validate
 real HTTPS routes, policy boundaries, HMAC/replay/time/IP/rate controls and the audit chain.
 The workflow runner performs real native sends to the explicitly selected administrator's
-email, creates labeled regression conversations and closes successful fixtures. It must not
-be run with a real customer's address. Outbound tests deliver a real signed HTTPS self-test
+email, creates labeled regression conversations and permanently removes its generated
+conversations, attachments, metadata, fixture notifications and send-log records in finally.
+Remaining queued fixture mail is cancelled before those models are removed.
+The runner must not be run with a real customer's address. Outbound tests deliver a real signed HTTPS self-test
 and use isolated generated signing keys/mock responses for APNs/FCM protocol checks; they
 never replace production provider credentials. Phone delivery still needs real credentials
 and a real registered device. The 2FA module is not installed, so real TOTP/recovery UI testing
@@ -394,6 +410,6 @@ is conditional on enabling that native module.
 
 Legacy: api_keys, api_logs. Mobile: api_device_tokens, api_nonces, api_audit_chain,
 api_audit_entries, api_push_devices, api_webhook_subscriptions, api_deliveries,
-api_conversation_metadata, api_saved_replies. FreeScout's own users, mailboxes,
-conversations, threads, customers, attachments, subscriptions and notifications remain
+api_conversation_metadata, api_saved_replies, api_agent_sync_changes. FreeScout's own users,
+mailboxes, conversations, threads, customers, attachments, subscriptions and notifications remain
 the authoritative native records.

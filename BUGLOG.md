@@ -26,3 +26,22 @@ Fix: the module's TransportSecurity service checks actual HTTPS server state, al
 forwarded scheme only from a proxy trusted by FreeScout. Login, token exchange and
 v2 credential middleware enforce it before processing credentials. Core is unchanged.
 Guard: Tests/boundaries.php checks an actual insecure request object is rejected.
+
+## API-009, 2026-11-16
+
+High severity: mobile credential issuance left an authenticated web session active;
+per-user read/star mutations touched the shared conversation and resynchronized other
+agents. Large inbox requests also hydrated every accessible conversation before paging.
+
+Fix: end and invalidate the issuance session; use an indexed per-agent sync timestamp;
+apply mailbox, Own and AssignedOnly restrictions in SQL, limit result pages before final
+policy checks, aggregate counts and batch presentation data. Shared AgentAccess owns
+push visibility. Provider credentials use encrypted caches with serialized refreshes.
+Guard: Tests/review.php checks bounded deep pages, constant presentation query counts,
+allowed sorting and isolated sync; Tests/login.php checks issuance logout; outbound.php
+checks APNs JWT reuse and a single OAuth exchange for repeated FCM deliveries.
+
+The explicit-mention regression also found that native subscriptions.event is an
+unsigned tiny integer. The original module event 1001 was outside its range. The
+module declares event 250, verifies its persistence and normalizes preference-hash
+integers across database drivers. No core schema or existing user selection is changed.

@@ -29,6 +29,13 @@ try {
     $headers = ['Authorization' => 'Bearer '.$data['token'], 'Accept' => 'application/json'];
     $response = $client->get('api/v2/me', ['headers' => $headers]);
     check($response->getStatusCode() === 200, 'new agent device authenticates');
+    $response = $client->get('manage/api-webhooks/mobile', ['allow_redirects' => false]);
+    check($response->getStatusCode() === 302 && strpos($response->getHeaderLine('Location'), '/login') !== false,
+        'device issuance ends the ambient FreeScout web session');
+    $challenge = $client->get('api/v2/login');
+    $csrf = json_decode($challenge->getBody()->getContents(), true)['csrf_token'];
+    $client->post('login', ['allow_redirects' => false, 'form_params' => ['_token' => $csrf,
+        'email' => $user->email, 'password' => $password]]);
     $response = $client->get('manage/api-webhooks/mobile');
     check($response->getStatusCode() === 403, 'non-admin native session cannot manage mobile credentials');
     $user->status = App\User::STATUS_DISABLED;

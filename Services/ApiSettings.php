@@ -6,6 +6,21 @@ use App\Option;
 
 class ApiSettings
 {
+    const SIGNATURE_PAST_SECONDS = 300;
+    const SIGNATURE_FUTURE_SECONDS = 30;
+    const NONCE_RETENTION_MINUTES = 10;
+    const DELIVERY_ATTEMPTS = 5;
+    const DELIVERY_BATCH_SIZE = 50;
+    const DELIVERY_DEADLINE_SECONDS = 20;
+    const DELIVERY_CLAIM_MINUTES = 2;
+    const DELIVERY_RETRY_SECONDS = 60;
+    const APNS_TOKEN_SECONDS = 3600;
+    const APNS_REFRESH_MARGIN_SECONDS = 600;
+    const OAUTH_TOKEN_SECONDS = 3600;
+    const OAUTH_REFRESH_MARGIN_SECONDS = 60;
+    const PUSH_TITLE = 'FreeScout';
+    const PUSH_BODY = 'A support conversation was updated.';
+
     public static function limits()
     {
         return [

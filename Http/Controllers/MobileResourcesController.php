@@ -3,7 +3,6 @@
 namespace Modules\ApiWebhooks\Http\Controllers;
 
 use App\Attachment;
-use App\Conversation;
 use App\Customer;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -32,26 +31,11 @@ class MobileResourcesController extends Controller
         foreach ($request->user()->mailboxesCanView() as $mailbox) {
             $folders = [];
             foreach ($mailbox->getAssesibleFolders() as $folder) {
-                $query = Conversation::getQueryByFolder($folder, $request->user()->id);
-                $visible = 0;
-                foreach ($query->cursor() as $conversation) {
-                    if ($request->attributes->get('device_token')->access_level === 'own'
-                        && $conversation->user_id != $request->user()->id) {
-                        continue;
-                    }
-                    if ($request->user()->can('view', $conversation)) {
-                        ++$visible;
-                    }
-                }
+                $visible = $this->access->folderQuery($request, $folder)->count();
                 $folders[] = ['id' => $folder->id, 'name' => $folder->getTypeName(), 'type' => $folder->type, 'count' => $visible];
             }
-            $snoozed = 0;
-            foreach ($this->access->query($request)->where('mailbox_id', $mailbox->id)
-                ->whereIn('id', \Modules\ApiWebhooks\Models\TicketMetadata::where('snoozed_until', '>', now())->select('conversation_id'))->cursor() as $conversation) {
-                if ($request->user()->can('view', $conversation)) {
-                    ++$snoozed;
-                }
-            }
+            $snoozed = $this->access->query($request)->where('mailbox_id', $mailbox->id)
+                ->whereIn('id', \Modules\ApiWebhooks\Models\TicketMetadata::where('snoozed_until', '>', now())->select('conversation_id'))->count();
             $folders[] = ['id' => null, 'name' => 'Snoozed', 'type' => 'snoozed', 'count' => $snoozed];
             $data[] = ['id' => $mailbox->id, 'name' => $mailbox->name, 'email' => $mailbox->email, 'folders' => $folders];
         }
@@ -65,21 +49,14 @@ class MobileResourcesController extends Controller
         if ($request->attributes->get('device_token')->access_level === 'root') {
             return Customer::query();
         }
-        $query = $this->access->query($request);
-        $ids = [];
-        foreach ($query->cursor() as $conversation) {
-            if ($request->user()->can('view', $conversation) && $conversation->customer_id) {
-                $ids[] = $conversation->customer_id;
-            }
-        }
-        return Customer::whereIn('id', array_unique($ids));
+        return Customer::whereIn('id', $this->access->query($request)->select('conversations.customer_id'));
     }
 
     public function customers(Request $request)
     {
         $request->validate(['page' => 'integer|min:1', 'per_page' => 'integer|min:1|max:100']);
         $page = $this->customerQuery($request)->with('emails')->orderBy('id')->paginate($request->input('per_page', 50));
-        return response()->json(['data' => $page->getCollection()->map(function ($customer) {
+        return response()->json(['data' => $this->access->visibleRows($request, $page->getCollection())->map(function ($customer) {
             return CustomerTransformer::transform($customer);
         }), 'page' => $page->currentPage(), 'has_more' => $page->hasMorePages()]);
     }
@@ -139,35 +116,23 @@ class MobileResourcesController extends Controller
     public function notifications(Request $request)
     {
         $request->validate(['per_page' => 'integer|min:1|max:100', 'page' => 'integer|min:1']);
-        // Return only the user's own notifications; inaccessible conversation payloads are omitted.
-        $data = [];
-        $perPage = (int) $request->input('per_page', 50);
+        $query = $request->user()->notifications()->whereIn('conversation_id',
+            $this->access->query($request)->select('conversations.id'))->orderBy('created_at', 'desc')->orderBy('id', 'desc');
+        $size = $this->access->pageSize($request);
         $page = (int) $request->input('page', 1);
-        $skip = ($page - 1) * $perPage;
-        $visible = 0;
-        foreach ($request->user()->notifications()->orderBy('created_at', 'desc')->orderBy('id')->cursor() as $notification) {
-            $payload = $notification->data;
-            $id = $payload['conversation_id'] ?? null;
-            if (!$id) {
-                continue;
-            }
-            try {
-                $this->access->conversation($request, $id);
-                if ($visible++ < $skip) {
-                    continue;
-                }
+        $result = $this->access->slice($request, $query->offset(($page - 1) * $size));
+        $conversations = $this->access->query($request)
+            ->whereIn('conversations.id', $result['rows']->pluck('conversation_id')->all())->get();
+        $conversations = $this->access->visibleRows($request, $conversations)->keyBy('id');
+        $data = [];
+        foreach ($result['rows'] as $notification) {
+            $conversation = $conversations->get($notification->conversation_id);
+            if ($conversation) {
                 $data[] = ['id' => $notification->id, 'read_at' => $notification->read_at,
-                    'conversation_id' => $id, 'created_at' => $notification->created_at];
-                if (count($data) > $perPage) {
-                    break;
-                }
-            } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $exception) {
-                continue;
-            } catch (\Symfony\Component\HttpKernel\Exception\NotFoundHttpException $exception) {
-                continue;
+                    'conversation_id' => $conversation->id, 'created_at' => $notification->created_at];
             }
         }
-        return response()->json(['data' => array_slice($data, 0, $perPage), 'page' => $page, 'has_more' => count($data) > $perPage]);
+        return response()->json(['data' => $data, 'page' => $page, 'has_more' => $result['has_more']]);
     }
 
     public function updateCustomer(Request $request, $id)

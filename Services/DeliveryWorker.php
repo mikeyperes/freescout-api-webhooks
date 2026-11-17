@@ -10,12 +10,12 @@ class DeliveryWorker
     public function run()
     {
         // Keep native queue jobs bounded even when remote providers are slow.
-        $deadline = microtime(true) + 20;
-        for ($batch = 0; $batch < 50 && microtime(true) < $deadline; ++$batch) {
+        $deadline = microtime(true) + ApiSettings::DELIVERY_DEADLINE_SECONDS;
+        for ($batch = 0; $batch < ApiSettings::DELIVERY_BATCH_SIZE && microtime(true) < $deadline; ++$batch) {
             $delivery = DB::transaction(function () {
-                $row = DB::table('api_deliveries')->whereNull('delivered_at')->where('attempts', '<', 5)
+                $row = DB::table('api_deliveries')->whereNull('delivered_at')->where('attempts', '<', ApiSettings::DELIVERY_ATTEMPTS)
                     ->where('next_attempt_at', '<=', now())->where(function ($query) {
-                        $query->whereNull('claimed_at')->orWhere('claimed_at', '<', now()->subMinutes(2));
+                        $query->whereNull('claimed_at')->orWhere('claimed_at', '<', now()->subMinutes(ApiSettings::DELIVERY_CLAIM_MINUTES));
                     })->orderBy('id')->lockForUpdate()->first();
                 if ($row) {
                     DB::table('api_deliveries')->where('id', $row->id)->update(['claimed_at' => now(), 'attempts' => $row->attempts + 1]);
@@ -37,8 +37,8 @@ class DeliveryWorker
                 'status_code' => $status,
                 'claimed_at' => null,
                 'delivered_at' => $successful ? now() : null,
-                'next_attempt_at' => !$successful && $status !== 410 && $delivery->attempts + 1 < 5
-                    ? now()->addSeconds(60 * pow(2, $delivery->attempts)) : null,
+                'next_attempt_at' => !$successful && $status !== 410 && $delivery->attempts + 1 < ApiSettings::DELIVERY_ATTEMPTS
+                    ? now()->addSeconds(ApiSettings::DELIVERY_RETRY_SECONDS * pow(2, $delivery->attempts)) : null,
                 'updated_at' => now(),
             ]);
         }
@@ -60,8 +60,7 @@ class DeliveryWorker
         }
         $payload = json_decode($delivery->payload, true);
         $conversation = \App\Conversation::find($payload['conversation_id'] ?? null);
-        if (!$conversation || !$token->user->can('view', $conversation)
-            || ($token->access_level === 'own' && $conversation->user_id != $token->user_id)) {
+        if (!$conversation || !app(AgentAccess::class)->canSee($token, $conversation)) {
             return 410;
         }
         if (($payload['preferences_hash'] ?? '') !== OutboundEvents::preferencesHash($token->user)) {

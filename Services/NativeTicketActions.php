@@ -32,7 +32,7 @@ class NativeTicketActions
             return response()->json(['error' => 'native_action_failed', 'message' => $result['msg'] ?? 'FreeScout refused the action.'], 422);
         }
         if ($action === 'star_conversation') {
-            \App\Conversation::findOrFail($values['conversation_id'])->touch();
+            app(AgentSyncChanges::class)->record($request->user(), \App\Conversation::findOrFail($values['conversation_id']));
         }
         return response()->json(['data' => array_merge($result, $created)], !empty($values['is_create']) ? 201 : 200);
     }

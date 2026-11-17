@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Modules\ApiWebhooks\Models\ApiKey;
 use Modules\ApiWebhooks\Models\DeviceToken;
 use Modules\ApiWebhooks\Services\RequestAudit;
+use Modules\ApiWebhooks\Services\ApiSettings;
 
 class MobileAuth
 {
@@ -81,7 +82,7 @@ class MobileAuth
     {
         $timestamp = (string) $request->header('X-Api-Timestamp', '');
         $age = time() - (int) $timestamp;
-        abort_unless(ctype_digit($timestamp) && $age <= 300 && $age >= -30, 401);
+        abort_unless(ctype_digit($timestamp) && $age <= ApiSettings::SIGNATURE_PAST_SECONDS && $age >= -ApiSettings::SIGNATURE_FUTURE_SECONDS, 401);
         $nonce = (string) $request->header('X-Api-Nonce', '');
         abort_unless(preg_match('/\A[a-f0-9]{32,128}\z/D', $nonce), 401);
         $signature = (string) $request->header('X-Api-Signature', '');

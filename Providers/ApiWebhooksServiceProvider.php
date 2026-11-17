@@ -42,9 +42,6 @@ class ApiWebhooksServiceProvider extends ServiceProvider
             });
         }
 
-        Event::listen(\App\Events\UserAddedNote::class, function ($event) {
-            app(\Modules\ApiWebhooks\Services\OutboundEvents::class)->mentioned($event);
-        });
         Event::listen(\App\Events\CustomerReplied::class, function ($event) {
             $metadata = \Modules\ApiWebhooks\Models\TicketMetadata::find($event->conversation->id);
             if ($metadata && $metadata->snoozed_until) {
@@ -81,7 +78,7 @@ class ApiWebhooksServiceProvider extends ServiceProvider
             })->name('apiwebhooks-deliveries-and-snooze')->everyMinute()->withoutOverlapping();
             $schedule->call(function () {
                 app(\Modules\ApiWebhooks\Services\RequestAudit::class)->prune();
-                \DB::table('api_nonces')->where('created_at', '<', now()->subMinutes(10))->delete();
+                \DB::table('api_nonces')->where('created_at', '<', now()->subMinutes(\Modules\ApiWebhooks\Services\ApiSettings::NONCE_RETENTION_MINUTES))->delete();
                 $days = \Modules\ApiWebhooks\Services\ApiSettings::value('log_retention_days');
                 \Modules\ApiWebhooks\Models\ApiLog::where('created_at', '<', now()->subDays($days))->delete();
             })->daily();

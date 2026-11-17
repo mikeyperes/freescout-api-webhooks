@@ -100,7 +100,7 @@ class ConversationTransformer
         }
 
         return $followers->map(function ($follower) {
-            $user = \App\User::find($follower->user_id);
+            $user = $follower->relationLoaded('user') ? $follower->getRelation('user') : \App\User::find($follower->user_id);
 
             if ($user) {
                 return [

@@ -55,6 +55,8 @@ $stack = GuzzleHttp\HandlerStack::create(new GuzzleHttp\Handler\MockHandler([
     new GuzzleHttp\Psr7\Response(200),
     new GuzzleHttp\Psr7\Response(200, [], json_encode(['access_token' => 'fixture-access-token'])),
     new GuzzleHttp\Psr7\Response(200),
+    new GuzzleHttp\Psr7\Response(200),
+    new GuzzleHttp\Psr7\Response(200),
 ]));
 $stack->push(GuzzleHttp\Middleware::history($history));
 $push = new FixturePushTransport(new GuzzleHttp\Client(['handler' => $stack]));
@@ -75,4 +77,11 @@ $jwt = explode('.', $oauth['assertion']);
 check(openssl_verify($jwt[0].'.'.$jwt[1], $decode($jwt[2]), openssl_pkey_get_details($rsa)['key'], OPENSSL_ALGO_SHA256) === 1, 'FCM RS256 assertion cryptographically verified');
 $sent = json_decode($history[2]['request']->getBody()->getContents(), true);
 check($sent['message']['data']['conversation_id'] === '1', 'FCM data values serialized as strings');
+check($push->send((object) ['provider' => 'apns', 'destination' => encrypt(str_repeat('a', 64))], ['event' => 'api.test']) === 200, 'second APNs push uses cached authentication');
+check($history[3]['request']->getHeaderLine('authorization') === $history[0]['request']->getHeaderLine('authorization'), 'APNs JWT reused between pushes');
+check($push->send((object) ['provider' => 'fcm', 'destination' => encrypt('fixture-device')], ['event' => 'api.test']) === 200, 'second FCM push uses cached OAuth token');
+check(count($history) === 5 && $history[4]['request']->getHeaderLine('authorization') === 'Bearer fixture-access-token', 'FCM makes one OAuth exchange for two pushes');
+foreach (['apns' => 'apns_credentials', 'fcm' => 'fcm_credentials'] as $provider => $name) {
+    Cache::forget('apiwebhooks:push-auth:'.$provider.':'.hash('sha256', json_encode($push->fixtures[$name])));
+}
 echo 'PASS total '.$checks.PHP_EOL;

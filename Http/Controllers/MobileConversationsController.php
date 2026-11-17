@@ -41,11 +41,9 @@ class MobileConversationsController extends Controller
             $folder = \App\Folder::findOrFail($request->input('folder_id'));
             abort_unless($request->user()->can('view', $folder->mailbox), 404);
             abort_if($folder->user_id && $folder->user_id != $request->user()->id, 404);
-            $query->where('mailbox_id', $folder->mailbox_id);
-            $native = Conversation::getQueryByFolder($folder, $request->user()->id);
-            $query->whereIn('id', $native->select('conversations.id'));
+            $query = $this->access->constrainFolder($query, $folder, $request->user());
         }
-        return response()->json($this->access->page($request, $query, [ConversationPresenter::class, 'transform']));
+        return response()->json($this->access->page($request, $query));
     }
 
     public function show(Request $request, $id)
@@ -119,7 +117,11 @@ class MobileConversationsController extends Controller
         $values['is_note'] = $note ? 1 : 0;
         $values['user_id'] = $conversation->user_id ?: -1;
         $values['attachments'] = $this->actions->attachments($request, $conversation);
-        return $this->actions->run($request, $draft ? 'save_draft' : 'send_reply', $values);
+        $response = $this->actions->run($request, $draft ? 'save_draft' : 'send_reply', $values);
+        if ($note && $response->getStatusCode() === 200) {
+            app(\Modules\ApiWebhooks\Services\OutboundEvents::class)->mentioned($conversation, $request->input('mentions', []));
+        }
+        return $response;
     }
 
     public function update(Request $request, $id)
@@ -189,7 +191,7 @@ class MobileConversationsController extends Controller
         $request->user()->notifications()->where('conversation_id', $conversation->id)
             ->update(['read_at' => $request->input('read') ? now() : null]);
         $request->user()->clearWebsiteNotificationsCache();
-        $conversation->touch();
+        app(\Modules\ApiWebhooks\Services\AgentSyncChanges::class)->record($request->user(), $conversation);
         return response()->json(['read' => (bool) $request->input('read')]);
     }
 }

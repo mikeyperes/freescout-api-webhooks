@@ -6,7 +6,7 @@ use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Modules\ApiWebhooks\Services\AgentAccess;
-use Modules\ApiWebhooks\Transformers\ConversationTransformer;
+use Modules\ApiWebhooks\Services\AgentSyncChanges;
 use Modules\ApiWebhooks\Services\ConversationPresenter;
 
 class MobileSyncController extends Controller
@@ -33,32 +33,23 @@ class MobileSyncController extends Controller
                 'expires' => time() + 3600,
             ];
         }
-        $query = $access->query($request)->where('updated_at', '>=', $state['since'])->where('updated_at', '<=', $state['until']);
+        $time = AgentSyncChanges::timestamp();
+        $query = app(AgentSyncChanges::class)->query($access->query($request), $request->user())
+            ->whereRaw($time.' >= ?', [$state['since']])->whereRaw($time.' <= ?', [$state['until']]);
         if ($state['last_time']) {
-            $query->where(function ($after) use ($state) {
-                $after->where('updated_at', '>', $state['last_time'])->orWhere(function ($same) use ($state) {
-                    $same->where('updated_at', $state['last_time'])->where('id', '>', $state['last_id']);
-                });
-            });
+            $query->whereRaw('('.$time.' > ? OR ('.$time.' = ? AND conversations.id > ?))',
+                [$state['last_time'], $state['last_time'], $state['last_id']]);
         }
-        $items = [];
-        $limit = (int) $request->input('per_page', 50);
-        $hasMore = false;
-        foreach ($query->orderBy('updated_at')->orderBy('id')->cursor() as $conversation) {
-            if (!$request->user()->can('view', $conversation)) {
-                continue;
-            }
-            if (count($items) === $limit) {
-                $hasMore = true;
-                break;
-            }
-            $items[] = ConversationPresenter::transform($conversation);
-            $state['last_time'] = $conversation->updated_at->toDateTimeString();
-            $state['last_id'] = $conversation->id;
+        $result = $access->slice($request, $query->orderByRaw($time.' ASC')->orderBy('conversations.id'));
+        $last = $result['rows']->last();
+        if ($last) {
+            $state['last_time'] = $last->sync_updated_at;
+            $state['last_id'] = $last->id;
         }
+        $items = ConversationPresenter::page($access->visibleRows($request, $result['rows']), $request->user());
         return response()->json([
             'data' => $items,
-            'next_cursor' => $hasMore ? encrypt(json_encode($state)) : null,
+            'next_cursor' => $result['has_more'] ? encrypt(json_encode($state)) : null,
             // Inclusive overlap handles multiple updates with FreeScout's second-resolution timestamps.
             'next_since' => Carbon::parse($state['until'], 'UTC')->toIso8601String(),
             'requires_visibility_refresh' => true,

@@ -14,7 +14,7 @@ class WebhookDiagnosticController extends Controller
         abort_unless($encrypted, 404);
         $timestamp = (string) $request->header('X-FreeScout-Timestamp');
         $eventId = (string) $request->header('X-FreeScout-Event');
-        abort_unless(ctype_digit($timestamp) && abs(time() - (int) $timestamp) <= 300, 401);
+        abort_unless(ctype_digit($timestamp) && abs(time() - (int) $timestamp) <= \Modules\ApiWebhooks\Services\ApiSettings::SIGNATURE_PAST_SECONDS, 401);
         $expected = hash_hmac('sha256', $timestamp.'.'.$eventId.'.'.$request->getContent(), decrypt($encrypted));
         abort_unless(hash_equals($expected, (string) $request->header('X-FreeScout-Signature')), 401);
         $body = json_decode($request->getContent(), true);

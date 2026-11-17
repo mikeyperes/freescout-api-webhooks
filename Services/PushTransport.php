@@ -55,22 +55,49 @@ class PushTransport
         return $input.'.'.$this->base64Url($signature);
     }
 
+    protected function appleToken(array $settings)
+    {
+        return app(PushCredentialCache::class)->get('apns', $settings, ApiSettings::APNS_REFRESH_MARGIN_SECONDS, function () use ($settings) {
+            return ['token' => $this->jwt(['alg' => 'ES256', 'kid' => $settings['key_id']],
+                ['iss' => $settings['team_id'], 'iat' => time()], $settings['private_key'], 'ES256'),
+                'ttl' => ApiSettings::APNS_TOKEN_SECONDS];
+        });
+    }
+
+    protected function firebaseToken(array $settings)
+    {
+        return app(PushCredentialCache::class)->get('fcm', $settings, ApiSettings::OAUTH_REFRESH_MARGIN_SECONDS, function () use ($settings) {
+            $assertion = $this->jwt(['alg' => 'RS256', 'typ' => 'JWT'], [
+                'iss' => $settings['client_email'], 'scope' => 'https://www.googleapis.com/auth/firebase.messaging',
+                'aud' => 'https://oauth2.googleapis.com/token', 'iat' => time(),
+                'exp' => time() + ApiSettings::OAUTH_TOKEN_SECONDS,
+            ], $settings['private_key'], 'RS256');
+            $response = $this->client->post('https://oauth2.googleapis.com/token', ['form_params' => [
+                'grant_type' => 'urn:ietf:params:oauth:grant-type:jwt-bearer', 'assertion' => $assertion,
+            ]]);
+            $oauth = json_decode($response->getBody()->getContents(), true);
+            if ($response->getStatusCode() !== 200 || empty($oauth['access_token'])) {
+                throw new \RuntimeException('FCM authentication was refused.');
+            }
+            return ['token' => $oauth['access_token'], 'ttl' => max(1, (int) ($oauth['expires_in'] ?? ApiSettings::OAUTH_TOKEN_SECONDS))];
+        });
+    }
+
     public function send($device, array $payload)
     {
         $destination = decrypt($device->destination);
-        $client = $this->client;
         if ($device->provider === 'apns') {
             $settings = json_decode($this->credential('apns_credentials'), true);
             if (empty($settings['team_id']) || empty($settings['key_id']) || empty($settings['private_key']) || empty($settings['topic'])) {
                 throw new \RuntimeException('APNs configuration is incomplete.');
             }
-            $jwt = $this->jwt(['alg' => 'ES256', 'kid' => $settings['key_id']],
-                ['iss' => $settings['team_id'], 'iat' => time()], $settings['private_key'], 'ES256');
+            $jwt = $this->appleToken($settings);
             $host = !empty($settings['sandbox']) ? 'https://api.sandbox.push.apple.com' : 'https://api.push.apple.com';
-            $response = $client->post($host.'/3/device/'.rawurlencode($destination), [
+            $response = $this->client->post($host.'/3/device/'.rawurlencode($destination), [
                 'version' => 2.0,
                 'headers' => ['authorization' => 'bearer '.$jwt, 'apns-topic' => $settings['topic'], 'apns-push-type' => 'alert'],
-                'json' => ['aps' => ['alert' => 'A support conversation was updated.', 'sound' => 'default'], 'data' => $payload],
+                'json' => ['aps' => ['alert' => ['title' => ApiSettings::PUSH_TITLE, 'body' => ApiSettings::PUSH_BODY],
+                    'sound' => 'default'], 'data' => $payload],
             ]);
             return $response->getStatusCode();
         }
@@ -79,24 +106,15 @@ class PushTransport
             || !preg_match('/\A[a-z][a-z0-9-]{4,62}\z/D', $settings['project_id'])) {
             throw new \RuntimeException('FCM service account configuration is incomplete.');
         }
-        $assertion = $this->jwt(['alg' => 'RS256', 'typ' => 'JWT'], [
-            'iss' => $settings['client_email'], 'scope' => 'https://www.googleapis.com/auth/firebase.messaging',
-            'aud' => 'https://oauth2.googleapis.com/token', 'iat' => time(), 'exp' => time() + 3600,
-        ], $settings['private_key'], 'RS256');
-        $response = $client->post('https://oauth2.googleapis.com/token', ['form_params' => [
-            'grant_type' => 'urn:ietf:params:oauth:grant-type:jwt-bearer', 'assertion' => $assertion,
-        ]]);
-        $oauth = json_decode($response->getBody()->getContents(), true);
-        if ($response->getStatusCode() !== 200 || empty($oauth['access_token'])) {
-            throw new \RuntimeException('FCM authentication was refused.');
-        }
+        $oauth = $this->firebaseToken($settings);
         $data = [];
         foreach ($payload as $key => $value) {
             $data[$key] = (string) $value;
         }
-        $response = $client->post('https://fcm.googleapis.com/v1/projects/'.$settings['project_id'].'/messages:send', [
-            'headers' => ['Authorization' => 'Bearer '.$oauth['access_token']],
-            'json' => ['message' => ['token' => $destination, 'notification' => ['title' => 'FreeScout', 'body' => 'A support conversation was updated.'], 'data' => $data]],
+        $response = $this->client->post('https://fcm.googleapis.com/v1/projects/'.$settings['project_id'].'/messages:send', [
+            'headers' => ['Authorization' => 'Bearer '.$oauth],
+            'json' => ['message' => ['token' => $destination,
+                'notification' => ['title' => ApiSettings::PUSH_TITLE, 'body' => ApiSettings::PUSH_BODY], 'data' => $data]],
         ]);
         return $response->getStatusCode();
     }

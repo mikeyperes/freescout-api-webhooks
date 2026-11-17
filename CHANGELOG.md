@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.1, 2026-11-16
+
+- Apply shared SQL scoping, bounded pages/counts, activity sorting and batch presentation.
+- Centralize token visibility for inboxes and push; cache encrypted APNs/FCM credentials.
+- Isolate per-agent read/star sync changes without touching shared conversation timestamps.
+- End the issuance web session; declare additional-authentication readiness explicitly.
+- Pass note mentions explicitly and name delivery/authentication defaults in ApiSettings.
+- Remove generated native test fixtures in finally and add focused review regressions.
+
 ## 2.0.0, 2026-11-16
 
 - Add revocable hashed agent/device credentials and signed server credentials with nonce replay protection.

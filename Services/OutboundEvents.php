@@ -8,7 +8,8 @@ use Modules\ApiWebhooks\Models\DeviceToken;
 
 class OutboundEvents
 {
-    const EVENT_MENTION = 1001;
+    // Module event ID must fit FreeScout subscriptions.event (unsigned tiny integer).
+    const EVENT_MENTION = 250;
 
     public function webhook($event)
     {
@@ -30,30 +31,25 @@ class OutboundEvents
         }
     }
 
-    public function mentioned($event)
+    public function mentioned($conversation, array $mentions)
     {
-        $request = request();
-        if (!$request->attributes->get('device_token') || !$request->is('api/v2/conversations/*/notes')
-            || $event->thread->created_by_user_id != $request->user()->id) {
-            return;
-        }
-        foreach ($request->input('mentions', []) as $id) {
+        foreach ($mentions as $id) {
             $user = \App\User::find($id);
             if ($user && $user->subscriptions()->where('medium', Subscription::MEDIUM_MOBILE)->where('event', self::EVENT_MENTION)->exists()) {
-                $this->pushToUser($user, $event->conversation, 'conversation.mention');
+                $this->pushToUser($user, $conversation, 'conversation.mention');
             }
         }
     }
 
     protected function pushToUser($user, $conversation, $event)
     {
-        if (!$user->isActive() || !$user->can('view', $conversation)) {
+        if (!$user->isActive()) {
             return;
         }
         $tokens = DeviceToken::where('user_id', $user->id)->where('kind', 'device')
             ->whereNull('revoked_at')->where('expires_at', '>', now())->get();
         foreach ($tokens as $token) {
-            if ($token->access_level === 'own' && $conversation->user_id != $user->id) {
+            if (!app(AgentAccess::class)->canSee($token, $conversation)) {
                 continue;
             }
             $device = DB::table('api_push_devices')->where('token_id', $token->id)->first();
@@ -80,6 +76,8 @@ class OutboundEvents
 
     public static function preferencesHash($user)
     {
-        return hash('sha256', $user->subscriptions()->where('medium', Subscription::MEDIUM_MOBILE)->orderBy('event')->pluck('event')->toJson());
+        $events = $user->subscriptions()->where('medium', Subscription::MEDIUM_MOBILE)->orderBy('event')
+            ->pluck('event')->map(function ($event) { return (int) $event; })->values()->all();
+        return hash('sha256', json_encode($events));
     }
 }

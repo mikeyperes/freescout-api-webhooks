@@ -1,14 +1,17 @@
 <?php
 
 require __DIR__.'/bootstrap.php';
+require __DIR__.'/FixtureCleanup.php';
 
 use Modules\ApiWebhooks\Models\DeviceToken;
 use Illuminate\Support\Facades\DB;
 
 $actor = App\User::findOrFail((int) ($argv[1] ?? 0));
+$previousCustomerId = App\Email::where('email', $actor->email)->value('customer_id');
 check($actor->isActive() && $actor->isAdmin(), 'explicit active administrator test actor');
 $client = new GuzzleHttp\Client(['base_uri' => rtrim(config('app.url'), '/').'/', 'http_errors' => false, 'cookies' => new GuzzleHttp\Cookie\CookieJar()]);
 $tokens = [];
+$subjects = [];
 try {
     list($token, $plain) = DeviceToken::issue($actor, 'ticketapi-2 endpoint tests', 'root');
     $tokens[] = $token;
@@ -40,6 +43,7 @@ try {
     $mailbox = $actor->mailboxesCanView()->first();
     check((bool) $mailbox, 'test mailbox resolved through native access');
     $subject = 'ticketapi-2 regression '.bin2hex(random_bytes(6));
+    $subjects[] = $subject;
     list($status, $data) = $request('POST', 'conversations', ['mailbox_id' => $mailbox->id, 'subject' => $subject,
         'body' => 'FreeScout mobile API delivery test. No action is required.', 'to' => [$actor->email]]);
     check($status === 201, 'live native conversation create status '.$status.' '.json_encode($data));
@@ -104,8 +108,9 @@ try {
     check($status === 200, 'live root customer retrieval');
     list($status) = $request('PATCH', 'customers/'.$customerId, ['first_name' => 'API Regression Updated']);
     check($status === 200, 'live native customer update');
-    App\Customer::findOrFail($customerId)->delete();
+    App\Customer::findOrFail($customerId)->deleteCustomer();
     $mergeSubject = $subject.' merge';
+    $subjects[] = $mergeSubject;
     list($status, $mergedData) = $request('POST', 'conversations', ['mailbox_id' => $mailbox->id, 'subject' => $mergeSubject,
         'body' => 'FreeScout mobile API merge delivery test. No action is required.', 'to' => [$actor->email]]);
     check($status === 201 && isset($mergedData['data']['conversation_id']), 'native creation returns conversation identity');
@@ -133,6 +138,9 @@ try {
     check($status === 200, 'test conversation closed');
     echo 'PASS total '.$checks.PHP_EOL;
 } finally {
+    FixtureCleanup::conversations(App\Conversation::whereIn('subject', $subjects)->pluck('id')->all(), $actor->id);
+    FixtureCleanup::attachments(isset($attachmentId) ? [$attachmentId] : [], $actor->id);
+    FixtureCleanup::actorCustomer($actor, $previousCustomerId);
     foreach ($tokens as $token) {
         DB::table('api_push_devices')->where('token_id', $token->id)->delete();
         DB::table('api_nonces')->where('token_id', $token->id)->delete();
